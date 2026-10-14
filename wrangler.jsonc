@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "oau-portal-checker",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-01",
+  "durable_objects": {
+    "bindings": [{ "name": "OWNER", "class_name": "OwnerBot" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OwnerBot"] }],
+  // Every 15 minutes. Change to "*/30 * * * *" for every 30 minutes.
+  "triggers": { "crons": ["*/15 * * * *"] }
+}

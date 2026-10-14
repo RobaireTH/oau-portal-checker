@@ -1,0 +1,22 @@
+{
+  "name": "oau-portal-checker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "bun scripts/deploy.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "types": "wrangler types --include-runtime false"
+  },
+  "dependencies": {
+    "grammy": "^1.46.0",
+    "hono": "^4.13.13"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261011.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.149.0"
+  }
+}
