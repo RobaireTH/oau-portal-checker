@@ -1,6 +1,6 @@
 import { createBot } from "./bot";
 import { escapeHtml } from "./format";
-import { semesterLabel } from "./grades";
+import { semesterLabel, semesterProgress, summarize } from "./grades";
 import { refreshResults } from "./cache";
 import { NotLoggedInError } from "./portal";
 import type { BotEnv, Course, LastCheck, Results } from "./types";
@@ -24,6 +24,15 @@ export function flatten(results: Results): Snapshot {
     courses.map((course) => [JSON.stringify([semester, course.code]), course])));
 }
 
+export function expand(snapshot: Snapshot): Results {
+  const results: Results = {};
+  for (const [id, course] of Object.entries(snapshot)) {
+    const [semester] = JSON.parse(id) as [string, string];
+    (results[semester] ??= []).push(course);
+  }
+  return results;
+}
+
 export function diff(previous: Snapshot, current: Snapshot): Change[] {
   const changes: Change[] = [];
   for (const id of new Set([...Object.keys(previous), ...Object.keys(current)])) {
@@ -41,7 +50,29 @@ function resultText(course: Course): string {
   return `${course.score ?? "pending"} (${course.grade || "pending"}), ${course.unit} units`;
 }
 
-export function formatChanges(changes: Change[]): string[] {
+function transition(before: number | null, after: number | null): string {
+  const left = before === null ? "n/a" : before.toFixed(2);
+  const right = after === null ? "n/a" : after.toFixed(2);
+  if (before === null || after === null) return `${left} -> ${right}`;
+  const difference = after - before;
+  if (Math.abs(difference) < 0.005) return `${left} -> ${right} (no change)`;
+  return `${left} -> ${right} (${difference >= 0 ? "+" : ""}${difference.toFixed(2)})`;
+}
+
+function impactLines(changes: Change[], previous: Results, current: Results): string[] {
+  const beforeProgress = new Map(semesterProgress(previous).map((semester) => [semester.key, semester]));
+  const afterProgress = new Map(semesterProgress(current).map((semester) => [semester.key, semester]));
+  const semesters = [...new Set(changes.map((change) => change.semester))];
+  const lines = semesters.map((semester) => {
+    const before = beforeProgress.get(semester)?.sgpa ?? null;
+    const after = afterProgress.get(semester)?.sgpa ?? null;
+    return `${semesterLabel(semester)} SGPA: ${transition(before, after)}`;
+  });
+  lines.push(`Current CGPA: ${transition(summarize(previous).cgpa, summarize(current).cgpa)}`);
+  return lines;
+}
+
+export function formatChanges(changes: Change[], previous?: Results, current?: Results): string[] {
   const header = "<b>Results updated on the portal</b>";
   const messages: string[] = [];
   let message = header;
@@ -56,6 +87,17 @@ export function formatChanges(changes: Change[]): string[] {
       message = header;
     }
     message += `\n${line}`;
+  }
+  if (previous && current && changes.length) {
+    const heading = "<b>Calculated GPA impact</b>";
+    const lines = impactLines(changes, previous, current).map(escapeHtml);
+    const block = `${heading}\n${lines.join("\n")}`;
+    if (message.length + block.length + 2 > 3500) {
+      if (message !== header) messages.push(message);
+      message = `${header}\n${block}`;
+    } else {
+      message += `\n\n${block}`;
+    }
   }
   if (message !== header) messages.push(message);
   return messages;
@@ -81,12 +123,14 @@ export async function checkForNewResults(env: BotEnv, send: Send = (message, htm
   const checkedAt = new Date().toISOString();
   try {
     await flushPending(env, send);
-    const current = flatten((await refreshResults(env)).results);
+    const refreshed = await refreshResults(env);
+    const currentResults = refreshed.results;
+    const current = flatten(currentResults);
     const previous = await env.STATE.get<Snapshot>("snapshot", "json");
     if (!previous) {
       await env.STATE.put("snapshot", JSON.stringify(current));
     } else {
-      const messages = formatChanges(diff(previous, current));
+      const messages = formatChanges(diff(previous, current), expand(previous), currentResults);
       if (messages.length) {
         await env.STATE.put("pending_notification", JSON.stringify({
           snapshot: current, messages, next: 0,
