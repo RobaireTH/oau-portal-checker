@@ -5,7 +5,6 @@ interface __BaseEnv_Env {
 	WEBHOOK_SECRET: string;
 	OWNER_ID: string;
 	ENCRYPTION_KEY: string;
-	PIN: string;
 	OWNER: DurableObjectNamespace<import("./src/index").OwnerBot>;
 }
 declare namespace Cloudflare {

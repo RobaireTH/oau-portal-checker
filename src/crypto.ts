@@ -23,6 +23,18 @@ async function importKey(base64Key: string): Promise<CryptoKey> {
   ]);
 }
 
+async function importHmacKey(base64Key: string): Promise<CryptoKey> {
+  const bytes = fromBase64(base64Key);
+  if (bytes.length !== 32) throw new Error("ENCRYPTION_KEY must encode exactly 32 bytes");
+  return crypto.subtle.importKey(
+    "raw",
+    bytes,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+}
+
 export async function encrypt(base64Key: string, plaintext: string): Promise<EncryptedPayload> {
   const key = await importKey(base64Key);
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -44,4 +56,10 @@ export async function decrypt(base64Key: string, payload: EncryptedPayload): Pro
   );
 
   return decoder.decode(plaintext);
+}
+
+export async function digestPin(base64Key: string, pin: string): Promise<string> {
+  const key = await importHmacKey(base64Key);
+  const digest = await crypto.subtle.sign("HMAC", key, encoder.encode(`pin:${pin}`));
+  return toBase64(new Uint8Array(digest));
 }

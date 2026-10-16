@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import type { Update } from "grammy/types";
 import { createBot } from "../src/bot";
 import { loadResults } from "../src/cache";
-import { decrypt, encrypt } from "../src/crypto";
+import { decrypt, digestPin, encrypt } from "../src/crypto";
 import { semesterPages } from "../src/format";
 import { gpa, summarize } from "../src/grades";
 import { Inbox } from "../src/inbox";
@@ -48,8 +48,8 @@ afterEach(() => { globalThis.fetch = originalFetch; });
 async function setup(seed: Record<string, unknown> = {}) {
   const storage = new MemoryStorage();
   const state = new DurableStateStore(storage as unknown as DurableObjectStorage);
-  for (const [k, v] of Object.entries(seed)) await state.put(k, JSON.stringify(v));
-  const env: BotEnv = { STATE: state, BOT_TOKEN: "123:dummy", OWNER_ID: "42", WEBHOOK_SECRET: "dummy", PIN: "1234", ENCRYPTION_KEY: key };
+  for (const [k, v] of Object.entries(seed)) await state.put(k, typeof v === "string" ? v : JSON.stringify(v));
+  const env: BotEnv = { STATE: state, BOT_TOKEN: "123:dummy", OWNER_ID: "42", WEBHOOK_SECRET: "dummy", ENCRYPTION_KEY: key };
   const bot = createBot(env);
   const calls: { method: string; payload: any }[] = [];
   bot.api.config.use(async (_previous, method, payload) => {
@@ -124,6 +124,27 @@ test("starting login cancels a pending PIN prompt", async () => {
   expect(calls.some(c => c.payload.text?.startsWith("Wrong PIN"))).toBe(false);
 });
 
+test("first protected command creates the PIN inside Telegram", async () => {
+  const { bot, state, calls } = await setup({ session, results: cache });
+  await processUpdate(bot, message("/results"));
+  await processUpdate(bot, message("1234"));
+  const stored = await state.get("pin_digest");
+  expect(stored).toBe(await digestPin(key, "1234"));
+  expect(stored).not.toContain("1234");
+  expect(calls.some(c => c.method === "deleteMessage")).toBe(true);
+  expect(calls.some(c => c.method === "sendMessage" && c.payload.text === "PIN saved.")).toBe(true);
+  expect(calls.some(c => c.method === "sendMessage" && c.payload.text.startsWith("Pick a semester"))).toBe(true);
+});
+
+test("PIN setup rejects invalid values without ending the prompt", async () => {
+  const { bot, state, calls } = await setup();
+  await processUpdate(bot, message("/setpin"));
+  await processUpdate(bot, message("12ab"));
+  expect(await state.get("pin_digest")).toBeNull();
+  expect(await state.get("pin_state", "json")).toEqual({ action: "set" });
+  expect(calls.some(c => c.payload.text?.startsWith("PIN must contain"))).toBe(true);
+});
+
 test("password whitespace and slash prefixes survive login; old account data is reset", async () => {
   const { bot, state } = await setup({ login_state: { step: "password", username: "TEST/2000/000" }, session, results: cache, snapshot: {} });
   let sentPassword: string | undefined;
@@ -154,7 +175,7 @@ test("credential encryption failure cannot replace the active account", async ()
 });
 
 test("valid PIN grants access to its picker; expired authorization denies navigation", async () => {
-  const { bot, state, calls } = await setup({ session, results: cache });
+  const { bot, state, calls } = await setup({ session, results: cache, pin_digest: await digestPin(key, "1234") });
   await processUpdate(bot, message("/results"));
   await processUpdate(bot, message("1234"));
   await processUpdate(bot, callback());
