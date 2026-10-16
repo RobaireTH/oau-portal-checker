@@ -99,7 +99,9 @@ export function createBot(env: BotEnv): Bot {
         expirationTtl: PIN_TIMEOUT_SECONDS,
       },
     );
-    await ctx.reply(configured ? "Enter your PIN." : "Create a 4 to 12 digit PIN.");
+    await ctx.reply(configured
+      ? "Enter your PIN."
+      : `Create a 4 to 12 digit PIN. I'll continue to your ${target === "results" ? "semester results" : "summary"} after saving it.`);
   }
 
   async function showResults(ctx: Context) {
@@ -128,7 +130,7 @@ export function createBot(env: BotEnv): Bot {
       const payload = await prepareCredentials(env, { username: state.username, password });
       const session = await login(state.username, password);
       await saveAccount(env, session, payload);
-      await ctx.reply("Logged in. I'll stay logged in until you send /logout.");
+      await ctx.reply("Logged in. Next, send /refresh to fetch your latest results, then use /results to view them by semester.");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await ctx.reply(`Login failed: ${escapeHtml(message)}. Send /login to try again.`, { parse_mode: "HTML" });
@@ -146,7 +148,7 @@ export function createBot(env: BotEnv): Bot {
 
   bot.command("cancel", async (ctx) => {
     await env.STATE.write({}, ["login_state", "pin_state", "result_access"]);
-    await ctx.reply("Canceled.");
+    await ctx.reply("Canceled. Send /start to see the available commands.");
   });
 
   bot.command("login", async (ctx) => {
@@ -159,7 +161,7 @@ export function createBot(env: BotEnv): Bot {
 
   bot.command("logout", async (ctx) => {
     await env.STATE.write({}, ACCOUNT_STATE_KEYS);
-    await ctx.reply("Logged out. Your saved password has been deleted.");
+    await ctx.reply("Logged out and deleted your saved password. Send /login when you want to connect again.");
   });
 
   bot.command("setpin", async (ctx) => {
@@ -194,9 +196,18 @@ export function createBot(env: BotEnv): Bot {
           return;
         }
         await env.STATE.put("pin_digest", await digestPin(env.ENCRYPTION_KEY, text));
-        await ctx.reply("PIN saved.");
-        if (pin.target === "results") await showResults(ctx);
-        else if (pin.target === "summary") await showSummary(ctx);
+        if (pin.target === "results") {
+          await ctx.reply("PIN saved. Loading your semester results now.");
+          await showResults(ctx);
+        } else if (pin.target === "summary") {
+          await ctx.reply("PIN saved. Loading your academic summary now.");
+          await showSummary(ctx);
+        } else {
+          const session = await env.STATE.get<Session>("session", "json");
+          await ctx.reply(session
+            ? "PIN saved. Next, send /results to browse by semester or /summary to view your CGPA."
+            : "PIN saved. Next, send /login to connect your portal account.");
+        }
         return;
       }
 
@@ -253,7 +264,7 @@ export function createBot(env: BotEnv): Bot {
     const courses = key === undefined ? undefined : results[key];
 
     if (!key || !courses) {
-      await ctx.editMessageText("That semester is no longer on the portal.");
+      await ctx.editMessageText("That semester is no longer on the portal. Send /refresh, then open /results again.");
       return;
     }
 
@@ -289,7 +300,7 @@ export function createBot(env: BotEnv): Bot {
 
   bot.command("refresh", async (ctx) => {
     const { fetchedAt } = await refreshResults(env);
-    await ctx.reply(`Results refreshed at ${formatTime(fetchedAt)}.`);
+    await ctx.reply(`Results refreshed at ${formatTime(fetchedAt)}. Next, send /results to browse by semester or /summary to view your CGPA.`);
   });
 
   bot.command("status", async (ctx) => {
@@ -313,6 +324,9 @@ export function createBot(env: BotEnv): Bot {
         ? `Last check: ${formatTime(lastCheck.at)} - ${lastCheck.ok ? "OK" : `failed: ${escapeHtml(lastCheck.error ?? "unknown error")}`}`
         : "Last check: none yet",
       "Automatic checks run every 15 minutes.",
+      session
+        ? "Next: send /refresh, /results, or /summary."
+        : "Next: send /login to connect your account.",
     ];
 
     await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
