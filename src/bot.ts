@@ -1,4 +1,5 @@
-import { Bot, GrammyError, type Context } from "grammy/web";
+import { Bot, GrammyError, InputFile, type Context } from "grammy/web";
+import { analyzeResults, formatAnalytics, renderAnalyticsChart } from "./analytics";
 import { loadResults, refreshResults } from "./cache";
 import {
   hasCredentials,
@@ -29,6 +30,7 @@ const HELP = [
   "/logout - sign out and delete the saved password",
   "/clear - delete recent messages from this chat",
   "/setpin - create or change your results PIN",
+  "/analytics - GPA trends and performance statistics",
   "/results - pick a semester to view (asks for PIN)",
   "/summary - CGPA and unit totals (asks for PIN)",
   "/refresh - fetch the latest results from the portal now",
@@ -99,7 +101,7 @@ export function createBot(env: BotEnv): Bot {
 
   bot.api.config.use(async (previous, method, payload, signal) => {
     const response = await previous(method, payload, signal);
-    if (method === "sendMessage" && response.ok) {
+    if ((method === "sendMessage" || method === "sendPhoto") && response.ok) {
       const message = response.result as { message_id: number; date: number };
       await rememberMessage(message.message_id, message.date);
     }
@@ -130,9 +132,10 @@ export function createBot(env: BotEnv): Bot {
         expirationTtl: PIN_TIMEOUT_SECONDS,
       },
     );
+    const destination = target === "results" ? "semester results" : target === "summary" ? "summary" : "analytics";
     await ctx.reply(configured
       ? "Enter your PIN."
-      : `Create a 4 to 12 digit PIN. I'll continue to your ${target === "results" ? "semester results" : "summary"} after saving it.`);
+      : `Create a 4 to 12 digit PIN. I'll continue to your ${destination} after saving it.`);
   }
 
   async function showResults(ctx: Context) {
@@ -154,6 +157,25 @@ export function createBot(env: BotEnv): Bot {
     });
   }
 
+  async function showAnalytics(ctx: Context) {
+    const { results } = await loadResults(env);
+    const analytics = analyzeResults(results);
+    const caption = formatAnalytics(analytics);
+    try {
+      const chart = await renderAnalyticsChart(analytics);
+      await ctx.replyWithPhoto(new InputFile(chart, "academic-trend.png"), {
+        caption,
+        parse_mode: "HTML",
+        reply_markup: DELETE_KEYBOARD,
+      });
+    } catch {
+      await ctx.reply(`${caption}\n\n<i>The chart is temporarily unavailable. Send /analytics to try it again.</i>`, {
+        parse_mode: "HTML",
+        reply_markup: DELETE_KEYBOARD,
+      });
+    }
+  }
+
   async function completeLogin(ctx: Context, state: Extract<LoginState, { step: "password" }>, password: string) {
     await env.STATE.delete("login_state");
     await ctx.deleteMessage().catch(() => {});
@@ -161,7 +183,7 @@ export function createBot(env: BotEnv): Bot {
       const payload = await prepareCredentials(env, { username: state.username, password });
       const session = await login(state.username, password);
       await saveAccount(env, session, payload);
-      await ctx.reply("Logged in. Next, send /refresh to fetch your latest results, then use /results to view them by semester.");
+      await ctx.reply("Logged in. Next, send /refresh to fetch your latest results, then use /results to browse by semester or /analytics for performance trends.");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await ctx.reply(`Login failed: ${escapeHtml(message)}. Send /login to try again.`, { parse_mode: "HTML" });
@@ -224,6 +246,7 @@ export function createBot(env: BotEnv): Bot {
 
   bot.command("results", (ctx) => askPin(ctx, "results"));
   bot.command("summary", (ctx) => askPin(ctx, "summary"));
+  bot.command("analytics", (ctx) => askPin(ctx, "analytics"));
 
   // Plain-text messages are either a PIN, or part of a /login conversation.
   bot.on("message:text", async (ctx, next) => {
@@ -250,10 +273,13 @@ export function createBot(env: BotEnv): Bot {
         } else if (pin.target === "summary") {
           await ctx.reply("PIN saved. Loading your academic summary now.");
           await showSummary(ctx);
+        } else if (pin.target === "analytics") {
+          await ctx.reply("PIN saved. Building your academic trend now.");
+          await showAnalytics(ctx);
         } else {
           const session = await env.STATE.get<Session>("session", "json");
           await ctx.reply(session
-            ? "PIN saved. Next, send /results to browse by semester or /summary to view your CGPA."
+            ? "PIN saved. Next, send /results to browse by semester, /summary for your CGPA, or /analytics for trends."
             : "PIN saved. Next, send /login to connect your portal account.");
         }
         return;
@@ -261,12 +287,13 @@ export function createBot(env: BotEnv): Bot {
 
       const configured = await env.STATE.get("pin_digest");
       if (!configured || await digestPin(env.ENCRYPTION_KEY, text) !== configured) {
-        await ctx.reply("Wrong PIN. Send /results or /summary to try again.");
+        await ctx.reply("Wrong PIN. Send /results, /summary, or /analytics to try again.");
         return;
       }
 
       if (pin.target === "results") await showResults(ctx);
-      else await showSummary(ctx);
+      else if (pin.target === "summary") await showSummary(ctx);
+      else await showAnalytics(ctx);
       return;
     }
 
@@ -348,7 +375,7 @@ export function createBot(env: BotEnv): Bot {
 
   bot.command("refresh", async (ctx) => {
     const { fetchedAt } = await refreshResults(env);
-    await ctx.reply(`Results refreshed at ${formatTime(fetchedAt)}. Next, send /results to browse by semester or /summary to view your CGPA.`);
+    await ctx.reply(`Results refreshed at ${formatTime(fetchedAt)}. Next, send /results to browse by semester, /summary for your CGPA, or /analytics for trends.`);
   });
 
   bot.command("status", async (ctx) => {
@@ -373,7 +400,7 @@ export function createBot(env: BotEnv): Bot {
         : "Last check: none yet",
       "Automatic checks run every 15 minutes.",
       session
-        ? "Next: send /refresh, /results, or /summary."
+        ? "Next: send /refresh, /results, /summary, or /analytics."
         : "Next: send /login to connect your account.",
     ];
 

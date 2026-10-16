@@ -10,6 +10,7 @@ Private Telegram bot that checks your OAU eportal results. Runs on Cloudflare Wo
 - `/cancel`: cancel a login or PIN prompt
 - `/clear`: delete tracked incoming and outgoing messages from the private chat while Telegram still permits deletion
 - `/setpin`: create or change the PIN inside the private bot chat
+- `/analytics`: asks for your PIN, then sends an SGPA and cumulative-CGPA trend chart with performance statistics
 - `/results`: asks for your PIN, then lets you pick a semester from buttons and view its courses and SGPA
 - `/summary`: asks for your PIN, then shows CGPA, units attempted and passed, and failed courses
 
@@ -27,6 +28,8 @@ After `/login`, the bot stays logged in. Your password is saved encrypted with A
 Webhook updates are encrypted and durably queued before Telegram receives success. A Durable Object alarm processes one update or scheduled check at a time, keeping portal work out of the HTTP background execution limit. Recent duplicate update IDs are ignored. Notification batches are split into bounded messages and retain progress when a later message fails. A process crash after Telegram accepts a message but before delivery progress is saved can still duplicate that message on retry.
 
 Pending or unrecognized grades are displayed but excluded from GPA and passed-unit calculations. The existing elective and semester-label assumptions remain; verify these against your official results before treating the calculated GPA as authoritative.
+
+Analytics charts are rendered by QuickChart. Only semester labels and aggregate SGPA and CGPA values are sent for rendering; matric numbers, course titles, and raw scores are not included.
 
 Limits to know about:
 
