@@ -19,7 +19,7 @@ Private Telegram bot that checks your OAU eportal results. Runs on Cloudflare Wo
 - `/refresh`: fetch the latest results from the portal now
 - `/status`: login state, auto re-login state, when results were last fetched, and the result of the last automatic check
 
-Results are cached in a SQLite-backed Durable Object and refreshed every 15 minutes by the automatic check, so protected views can be up to 15 minutes old. Use `/refresh` for the latest data. Large semesters have Previous/Next buttons. Result buttons expire five minutes after PIN authorization. Update alerts identify added, changed, or removed courses and show the resulting semester-GPA and current-CGPA movement.
+Results are cached in a SQLite-backed Durable Object and refreshed every 15 minutes by the automatic check, so protected views can be up to 15 minutes old. Use `/refresh` for the latest data. Large semesters have Previous/Next buttons. Result buttons expire five minutes after PIN authorization. Update alerts identify added, changed, or removed courses and show the resulting semester-GPA and current-CGPA movement. Elective updates are labeled and include separate passed-course and passed-unit progress for graduation tracking.
 
 The bot only accepts the owner's private chat. Login and PIN prompts cancel incompatible conversations. Passwords preserve whitespace and slash prefixes; `/cancel`, `/clear`, `/logout`, `/login`, and `/setpin` are reserved during password entry. PIN messages are deleted after reading, and only a keyed digest is stored. `/clear` silently removes tracked messages and sweeps up to 1,000 recent message IDs in the private chat. Telegram still prevents the bot from deleting messages outside its 48-hour deletion window.
 
@@ -29,7 +29,7 @@ After `/login`, the bot stays logged in. Your password is saved encrypted with A
 
 Webhook updates are encrypted and durably queued before Telegram receives success. A Durable Object alarm processes one update or scheduled check at a time, keeping portal work out of the HTTP background execution limit. Recent duplicate update IDs are ignored. Notification batches are split into bounded messages and retain progress when a later message fails. A process crash after Telegram accepts a message but before delivery progress is saved can still duplicate that message on retry.
 
-Pending or unrecognized grades are displayed but excluded from GPA and passed-unit calculations. The existing elective and semester-label assumptions remain; verify these against your official results before treating the calculated GPA as authoritative.
+Pending or unrecognized grades are displayed but excluded from GPA and passed-unit calculations. Electives remain visible and are tracked separately for graduation progress while staying excluded from SGPA and CGPA. The existing elective-code and semester-label assumptions remain; verify these against your official results before treating the calculations as authoritative.
 
 Analytics charts are rendered by QuickChart. Only semester labels and aggregate SGPA and CGPA values are sent for rendering; matric numbers, course titles, and raw scores are not included.
 
