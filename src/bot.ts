@@ -48,6 +48,7 @@ const PIN_TIMEOUT_SECONDS = 120;
 const ACCESS_TIMEOUT_SECONDS = 300;
 const MESSAGE_DELETE_WINDOW_SECONDS = 48 * 60 * 60;
 const MESSAGE_HISTORY_LIMIT = 1000;
+const MESSAGE_SWEEP_LIMIT = 1000;
 
 interface TrackedMessage {
   id: number;
@@ -184,9 +185,16 @@ export function createBot(env: BotEnv): Bot {
   bot.command("clear", async (ctx) => {
     const cutoff = Math.floor(Date.now() / 1000) - MESSAGE_DELETE_WINDOW_SECONDS;
     const history = await env.STATE.get<TrackedMessage[]>("message_history", "json") ?? [];
-    const ids = [...new Set(history.filter((message) => message.date > cutoff).map((message) => message.id))];
+    const latestId = ctx.message?.message_id;
+    if (latestId === undefined) return;
+    const inferredIds = Array.from(
+      { length: Math.min(latestId, MESSAGE_SWEEP_LIMIT) },
+      (_, index) => latestId - index,
+    );
+    const trackedIds = history.filter((message) => message.date > cutoff).map((message) => message.id);
+    const ids = [...new Set([...inferredIds, ...trackedIds])].sort((a, b) => b - a);
     for (let index = 0; index < ids.length; index += 100) {
-      await ctx.deleteMessages(ids.slice(index, index + 100));
+      await ctx.deleteMessages(ids.slice(index, index + 100)).catch(() => {});
     }
     await env.STATE.write({}, ["message_history", "login_state", "pin_state", "result_access"]);
   });
