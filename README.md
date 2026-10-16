@@ -8,6 +8,7 @@ Private Telegram bot that checks your OAU eportal results. Runs on Cloudflare Wo
 - `/login`: connect your portal account. The bot asks for your matric number and password in the chat, then deletes the password message.
 - `/logout`: sign out and delete the saved password
 - `/cancel`: cancel a login or PIN prompt
+- `/clear`: delete tracked incoming and outgoing messages from the private chat while Telegram still permits deletion
 - `/setpin`: create or change the PIN inside the private bot chat
 - `/results`: asks for your PIN, then lets you pick a semester from buttons and view its courses and SGPA
 - `/summary`: asks for your PIN, then shows CGPA, units attempted and passed, and failed courses
@@ -17,7 +18,7 @@ Private Telegram bot that checks your OAU eportal results. Runs on Cloudflare Wo
 
 Results are cached in a SQLite-backed Durable Object and refreshed every 15 minutes by the automatic check, so `/results` and `/summary` can be up to 15 minutes old. Use `/refresh` for the latest data. Large semesters have Previous/Next buttons. Result buttons expire five minutes after PIN authorization.
 
-The bot only accepts the owner's private chat. Login and PIN prompts cancel incompatible conversations. Passwords preserve whitespace and slash prefixes; `/cancel`, `/logout`, `/login`, and `/setpin` are reserved during password entry. PIN messages are deleted after reading, and only a keyed digest is stored.
+The bot only accepts the owner's private chat. Login and PIN prompts cancel incompatible conversations. Passwords preserve whitespace and slash prefixes; `/cancel`, `/clear`, `/logout`, `/login`, and `/setpin` are reserved during password entry. PIN messages are deleted after reading, and only a keyed digest is stored. `/clear` silently removes messages recorded by this deployment that are still inside Telegram's 48-hour deletion window; the Bot API cannot list or erase older untracked chat history.
 
 ## How login works
 

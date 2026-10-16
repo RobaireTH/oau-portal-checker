@@ -27,6 +27,7 @@ const HELP = [
   "",
   "/login - connect your OAU portal account",
   "/logout - sign out and delete the saved password",
+  "/clear - delete recent messages from this chat",
   "/setpin - create or change your results PIN",
   "/results - pick a semester to view (asks for PIN)",
   "/summary - CGPA and unit totals (asks for PIN)",
@@ -45,6 +46,13 @@ const LOGIN_TIMEOUT_SECONDS = 600;
 /** A PIN prompt expires after 2 minutes if nothing is entered. */
 const PIN_TIMEOUT_SECONDS = 120;
 const ACCESS_TIMEOUT_SECONDS = 300;
+const MESSAGE_DELETE_WINDOW_SECONDS = 48 * 60 * 60;
+const MESSAGE_HISTORY_LIMIT = 1000;
+
+interface TrackedMessage {
+  id: number;
+  date: number;
+}
 
 function semesterKeyboard(results: Results) {
   const keys = Object.keys(results).sort((a, b) => Number(a) - Number(b));
@@ -80,9 +88,31 @@ export function createBot(env: BotEnv): Bot {
   const bot = new Bot(env.BOT_TOKEN, { client: { timeoutSeconds: 10 } });
   const ownerId = Number(env.OWNER_ID);
 
+  async function rememberMessage(id: number, date: number) {
+    const cutoff = Math.floor(Date.now() / 1000) - MESSAGE_DELETE_WINDOW_SECONDS;
+    const history = await env.STATE.get<TrackedMessage[]>("message_history", "json") ?? [];
+    const retained = history.filter((message) => message.date > cutoff && message.id !== id);
+    retained.push({ id, date });
+    await env.STATE.put("message_history", JSON.stringify(retained.slice(-MESSAGE_HISTORY_LIMIT)));
+  }
+
+  bot.api.config.use(async (previous, method, payload, signal) => {
+    const response = await previous(method, payload, signal);
+    if (method === "sendMessage" && response.ok) {
+      const message = response.result as { message_id: number; date: number };
+      await rememberMessage(message.message_id, message.date);
+    }
+    return response;
+  });
+
   // Private bot: silently ignore everyone except the owner.
   bot.use(async (ctx, next) => {
     if (ctx.from?.id === ownerId && ctx.chat?.type === "private" && ctx.chat.id === ownerId) await next();
+  });
+
+  bot.use(async (ctx, next) => {
+    if (ctx.message) await rememberMessage(ctx.message.message_id, ctx.message.date);
+    await next();
   });
 
   async function askPin(ctx: Context, target: ProtectedAction) {
@@ -138,7 +168,7 @@ export function createBot(env: BotEnv): Bot {
   }
 
   bot.use(async (ctx, next) => {
-    if (!ctx.message?.text || /^\/(?:cancel|logout|login|setpin)(?:@\w+)?\s*$/.test(ctx.message.text)) return next();
+    if (!ctx.message?.text || /^\/(?:cancel|clear|logout|login|setpin)(?:@\w+)?\s*$/.test(ctx.message.text)) return next();
     const state = await env.STATE.get<LoginState>("login_state", "json");
     if (state?.step === "password") await completeLogin(ctx, state, ctx.message.text);
     else await next();
@@ -149,6 +179,16 @@ export function createBot(env: BotEnv): Bot {
   bot.command("cancel", async (ctx) => {
     await env.STATE.write({}, ["login_state", "pin_state", "result_access"]);
     await ctx.reply("Canceled. Send /start to see the available commands.");
+  });
+
+  bot.command("clear", async (ctx) => {
+    const cutoff = Math.floor(Date.now() / 1000) - MESSAGE_DELETE_WINDOW_SECONDS;
+    const history = await env.STATE.get<TrackedMessage[]>("message_history", "json") ?? [];
+    const ids = [...new Set(history.filter((message) => message.date > cutoff).map((message) => message.id))];
+    for (let index = 0; index < ids.length; index += 100) {
+      await ctx.deleteMessages(ids.slice(index, index + 100));
+    }
+    await env.STATE.write({}, ["message_history", "login_state", "pin_state", "result_access"]);
   });
 
   bot.command("login", async (ctx) => {

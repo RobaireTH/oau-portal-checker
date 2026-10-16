@@ -55,7 +55,7 @@ async function setup(seed: Record<string, unknown> = {}) {
   bot.api.config.use(async (_previous, method, payload) => {
     calls.push({ method, payload });
     return { ok: true, result: method === "getMe" ? { id: 123, is_bot: true, first_name: "Test", username: "test_bot" }
-      : method === "sendMessage" ? { message_id: 77, date: 0, chat: { id: 42, type: "private" }, text: payload.text } : true } as any;
+      : method === "sendMessage" ? { message_id: 77, date: Math.floor(Date.now() / 1000), chat: { id: 42, type: "private" }, text: payload.text } : true } as any;
   });
   return { storage, state, env, bot, calls };
 }
@@ -63,7 +63,7 @@ async function setup(seed: Record<string, unknown> = {}) {
 let updateId = 0;
 function message(text: string, group = false, sender = 42): Update {
   return { update_id: ++updateId, message: {
-    message_id: updateId, date: 0, from: { id: sender, is_bot: false, first_name: "Owner" },
+    message_id: updateId, date: Math.floor(Date.now() / 1000), from: { id: sender, is_bot: false, first_name: "Owner" },
     chat: group ? { id: -100, type: "supergroup", title: "Group" } : { id: 42, type: "private", first_name: "Owner" }, text,
     ...(text.startsWith("/") ? { entities: [{ type: "bot_command" as const, offset: 0, length: text.split(" ")[0].length }] } : {}),
   } };
@@ -122,6 +122,24 @@ test("starting login cancels a pending PIN prompt", async () => {
   expect(await state.get("pin_state")).toBeNull();
   expect(await state.get("login_state", "json")).toEqual({ step: "password", username: "TEST/2000/000" });
   expect(calls.some(c => c.payload.text?.startsWith("Wrong PIN"))).toBe(false);
+});
+
+test("clear deletes tracked incoming and outgoing messages in batches", async () => {
+  const date = Math.floor(Date.now() / 1000);
+  const tracked = [{ id: 77, date }, ...Array.from({ length: 205 }, (_, index) => ({ id: index + 1000, date }))];
+  const { bot, state, calls } = await setup({ message_history: tracked });
+  const start = message("/start");
+  await processUpdate(bot, start);
+  const clear = message("/clear");
+  await processUpdate(bot, clear);
+  const deletions = calls.filter(c => c.method === "deleteMessages");
+  const deleted = deletions.flatMap(c => c.payload.message_ids);
+  expect(deletions).toHaveLength(3);
+  expect(deletions.every(c => c.payload.message_ids.length <= 100)).toBe(true);
+  expect(deleted).toContain(start.message!.message_id);
+  expect(deleted).toContain(clear.message!.message_id);
+  expect(deleted).toContain(77);
+  expect(await state.get("message_history")).toBeNull();
 });
 
 test("first protected command creates the PIN inside Telegram", async () => {
