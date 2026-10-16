@@ -11,13 +11,15 @@ Private Telegram bot that checks your OAU eportal results. Runs on Cloudflare Wo
 - `/clear`: delete tracked incoming and outgoing messages from the private chat while Telegram still permits deletion
 - `/setpin`: create or change the PIN inside the private bot chat
 - `/analytics`: asks for your PIN, then sends an SGPA and cumulative-CGPA trend chart with performance statistics
-- `/results`: asks for your PIN, then lets you pick a semester from buttons and view its courses and SGPA
+- `/compare`: asks for your PIN, then compares every semester's SGPA, cumulative CGPA, and CGPA movement
+- `/report`: asks for your PIN, then generates a downloadable PDF with the GPA trend, semester comparison, and complete results
+- `/results`: asks for your PIN, then lets you pick a semester from buttons and view its courses, SGPA, and cumulative CGPA at that point
 - `/summary`: asks for your PIN, then shows CGPA, units attempted and passed, and failed courses
 
 - `/refresh`: fetch the latest results from the portal now
 - `/status`: login state, auto re-login state, when results were last fetched, and the result of the last automatic check
 
-Results are cached in a SQLite-backed Durable Object and refreshed every 15 minutes by the automatic check, so `/results` and `/summary` can be up to 15 minutes old. Use `/refresh` for the latest data. Large semesters have Previous/Next buttons. Result buttons expire five minutes after PIN authorization.
+Results are cached in a SQLite-backed Durable Object and refreshed every 15 minutes by the automatic check, so protected views can be up to 15 minutes old. Use `/refresh` for the latest data. Large semesters have Previous/Next buttons. Result buttons expire five minutes after PIN authorization. Update alerts identify added, changed, or removed courses and show the resulting semester-GPA and current-CGPA movement.
 
 The bot only accepts the owner's private chat. Login and PIN prompts cancel incompatible conversations. Passwords preserve whitespace and slash prefixes; `/cancel`, `/clear`, `/logout`, `/login`, and `/setpin` are reserved during password entry. PIN messages are deleted after reading, and only a keyed digest is stored. `/clear` silently removes tracked messages and sweeps up to 1,000 recent message IDs in the private chat. Telegram still prevents the bot from deleting messages outside its 48-hour deletion window.
 
