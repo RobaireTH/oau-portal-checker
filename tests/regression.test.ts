@@ -251,7 +251,15 @@ test("analytics calculates chronological GPA trends and performance extremes", (
   expect(analytics.highestScore).toEqual({ code: "CSC201", score: 75 });
   expect(analytics.lowestScore).toEqual({ code: "MTH202", score: 55 });
   expect(analytics.gradeDistribution).toEqual({ A: 1, B: 2, C: 1, D: 0, E: 0, F: 0 });
-  expect(formatAnalytics(analytics)).toContain("CGPA ATH");
+  const formatted = formatAnalytics({
+    ...analytics,
+    gradeDistribution: { A: 24, B: 8, C: 0, D: 0, E: 2, F: 1 },
+  });
+  expect(formatted).toContain("CGPA ATH");
+  expect(formatted).toContain("Grade Count   Share  Distribution");
+  expect(formatted).toContain("A        24   68.6%  ########");
+  expect(formatted).toContain("C         0    0.0%");
+  expect(formatted.length).toBeLessThan(1024);
   expect(analyticsChartRequest(analytics).chart.data.datasets).toHaveLength(2);
 });
 
