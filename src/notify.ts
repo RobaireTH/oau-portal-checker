@@ -1,6 +1,6 @@
 import { createBot } from "./bot";
 import { escapeHtml } from "./format";
-import { semesterLabel, semesterProgress, summarize } from "./grades";
+import { electiveProgress, isElective, semesterLabel, semesterProgress, summarize } from "./grades";
 import { refreshResults } from "./cache";
 import { NotLoggedInError } from "./portal";
 import type { BotEnv, Course, LastCheck, Results } from "./types";
@@ -59,6 +59,12 @@ function transition(before: number | null, after: number | null): string {
   return `${left} -> ${right} (${difference >= 0 ? "+" : ""}${difference.toFixed(2)})`;
 }
 
+function countTransition(before: number, after: number): string {
+  const difference = after - before;
+  if (!difference) return `${before} -> ${after} (no change)`;
+  return `${before} -> ${after} (${difference > 0 ? "+" : ""}${difference})`;
+}
+
 function impactLines(changes: Change[], previous: Results, current: Results): string[] {
   const beforeProgress = new Map(semesterProgress(previous).map((semester) => [semester.key, semester]));
   const afterProgress = new Map(semesterProgress(current).map((semester) => [semester.key, semester]));
@@ -69,6 +75,14 @@ function impactLines(changes: Change[], previous: Results, current: Results): st
     return `${semesterLabel(semester)} SGPA: ${transition(before, after)}`;
   });
   lines.push(`Current CGPA: ${transition(summarize(previous).cgpa, summarize(current).cgpa)}`);
+  if (changes.some(({ entry, previous: old }) => isElective((entry ?? old)!.code))) {
+    const before = electiveProgress(Object.values(previous).flat());
+    const after = electiveProgress(Object.values(current).flat());
+    lines.push(`Elective courses passed: ${countTransition(before.passedCourses, after.passedCourses)}`);
+    lines.push(`Elective units passed: ${countTransition(before.passedUnits, after.passedUnits)}`);
+    lines.push(`Elective status now: ${after.failedCourses} failed, ${after.pendingCourses} pending`);
+    lines.push("Electives are tracked for graduation and excluded only from SGPA and CGPA.");
+  }
   return lines;
 }
 
@@ -81,7 +95,8 @@ export function formatChanges(changes: Change[], previous?: Results, current?: R
     const update = !entry ? "removed from the portal" : previous
       ? `changed from ${resultText(previous)} to ${resultText(entry)}` : resultText(entry);
     // Bound upstream strings before escaping; every line and HTML message fits Telegram's limit.
-    const line = escapeHtml(`${semesterLabel(semester).slice(0, 60)}: ${code.slice(0, 40)} ${course.title.slice(0, 120)} - ${update.slice(0, 180)}`);
+    const category = isElective(course.code) ? " [elective]" : "";
+    const line = escapeHtml(`${semesterLabel(semester).slice(0, 60)}: ${code.slice(0, 40)}${category} ${course.title.slice(0, 120)} - ${update.slice(0, 180)}`);
     if (message.length + line.length + 1 > 3500) {
       messages.push(message);
       message = header;
@@ -89,7 +104,7 @@ export function formatChanges(changes: Change[], previous?: Results, current?: R
     message += `\n${line}`;
   }
   if (previous && current && changes.length) {
-    const heading = "<b>Calculated GPA impact</b>";
+    const heading = "<b>Calculated impact</b>";
     const lines = impactLines(changes, previous, current).map(escapeHtml);
     const block = `${heading}\n${lines.join("\n")}`;
     if (message.length + block.length + 2 > 3500) {
