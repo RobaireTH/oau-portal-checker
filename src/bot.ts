@@ -6,10 +6,11 @@ import {
   prepareCredentials,
   saveAccount,
 } from "./credentials";
-import { escapeHtml, semesterPages, formatSummary } from "./format";
+import { escapeHtml, formatSemesterComparison, semesterPages, formatSummary } from "./format";
 import { semesterLabel } from "./grades";
 import { digestPin } from "./crypto";
 import { login } from "./portal";
+import { generateAcademicReport } from "./report";
 import { ACCOUNT_STATE_KEYS } from "./state";
 import type {
   CachedResults,
@@ -31,6 +32,8 @@ const HELP = [
   "/clear - delete recent messages from this chat",
   "/setpin - create or change your results PIN",
   "/analytics - GPA trends and performance statistics",
+  "/compare - compare SGPA and cumulative CGPA by semester",
+  "/report - download a complete academic PDF report",
   "/results - pick a semester to view (asks for PIN)",
   "/summary - CGPA and unit totals (asks for PIN)",
   "/refresh - fetch the latest results from the portal now",
@@ -101,7 +104,7 @@ export function createBot(env: BotEnv): Bot {
 
   bot.api.config.use(async (previous, method, payload, signal) => {
     const response = await previous(method, payload, signal);
-    if ((method === "sendMessage" || method === "sendPhoto") && response.ok) {
+    if ((method === "sendMessage" || method === "sendPhoto" || method === "sendDocument") && response.ok) {
       const message = response.result as { message_id: number; date: number };
       await rememberMessage(message.message_id, message.date);
     }
@@ -132,7 +135,11 @@ export function createBot(env: BotEnv): Bot {
         expirationTtl: PIN_TIMEOUT_SECONDS,
       },
     );
-    const destination = target === "results" ? "semester results" : target === "summary" ? "summary" : "analytics";
+    const destination = target === "results" ? "semester results"
+      : target === "summary" ? "academic summary"
+      : target === "analytics" ? "academic trend"
+      : target === "compare" ? "semester comparison"
+      : "academic report";
     await ctx.reply(configured
       ? "Enter your PIN."
       : `Create a 4 to 12 digit PIN. I'll continue to your ${destination} after saving it.`);
@@ -176,6 +183,31 @@ export function createBot(env: BotEnv): Bot {
     }
   }
 
+  async function showComparison(ctx: Context) {
+    const { results } = await loadResults(env);
+    await ctx.reply(formatSemesterComparison(results), {
+      parse_mode: "HTML",
+      reply_markup: DELETE_KEYBOARD,
+    });
+  }
+
+  async function showReport(ctx: Context) {
+    const { results, fetchedAt } = await loadResults(env);
+    const report = await generateAcademicReport(results);
+    await ctx.replyWithDocument(new InputFile(report, "ifemate-academic-report.pdf"), {
+      caption: `Academic report generated from portal data refreshed ${formatTime(fetchedAt)}.`,
+      reply_markup: DELETE_KEYBOARD,
+    });
+  }
+
+  async function showProtected(ctx: Context, target: ProtectedAction) {
+    if (target === "results") await showResults(ctx);
+    else if (target === "summary") await showSummary(ctx);
+    else if (target === "analytics") await showAnalytics(ctx);
+    else if (target === "compare") await showComparison(ctx);
+    else await showReport(ctx);
+  }
+
   async function completeLogin(ctx: Context, state: Extract<LoginState, { step: "password" }>, password: string) {
     await env.STATE.delete("login_state");
     await ctx.deleteMessage().catch(() => {});
@@ -183,7 +215,7 @@ export function createBot(env: BotEnv): Bot {
       const payload = await prepareCredentials(env, { username: state.username, password });
       const session = await login(state.username, password);
       await saveAccount(env, session, payload);
-      await ctx.reply("Logged in. Next, send /refresh to fetch your latest results, then use /results to browse by semester or /analytics for performance trends.");
+      await ctx.reply("Logged in. Next, send /refresh to fetch your latest results, then use /results to browse by semester, /compare for the cumulative breakdown, or /analytics for performance trends.");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await ctx.reply(`Login failed: ${escapeHtml(message)}. Send /login to try again.`, { parse_mode: "HTML" });
@@ -247,6 +279,8 @@ export function createBot(env: BotEnv): Bot {
   bot.command("results", (ctx) => askPin(ctx, "results"));
   bot.command("summary", (ctx) => askPin(ctx, "summary"));
   bot.command("analytics", (ctx) => askPin(ctx, "analytics"));
+  bot.command("compare", (ctx) => askPin(ctx, "compare"));
+  bot.command("report", (ctx) => askPin(ctx, "report"));
 
   // Plain-text messages are either a PIN, or part of a /login conversation.
   bot.on("message:text", async (ctx, next) => {
@@ -267,19 +301,18 @@ export function createBot(env: BotEnv): Bot {
           return;
         }
         await env.STATE.put("pin_digest", await digestPin(env.ENCRYPTION_KEY, text));
-        if (pin.target === "results") {
-          await ctx.reply("PIN saved. Loading your semester results now.");
-          await showResults(ctx);
-        } else if (pin.target === "summary") {
-          await ctx.reply("PIN saved. Loading your academic summary now.");
-          await showSummary(ctx);
-        } else if (pin.target === "analytics") {
-          await ctx.reply("PIN saved. Building your academic trend now.");
-          await showAnalytics(ctx);
+        if (pin.target) {
+          const destination = pin.target === "results" ? "semester results"
+            : pin.target === "summary" ? "academic summary"
+            : pin.target === "analytics" ? "academic trend"
+            : pin.target === "compare" ? "semester comparison"
+            : "academic report";
+          await ctx.reply(`PIN saved. Loading your ${destination} now.`);
+          await showProtected(ctx, pin.target);
         } else {
           const session = await env.STATE.get<Session>("session", "json");
           await ctx.reply(session
-            ? "PIN saved. Next, send /results to browse by semester, /summary for your CGPA, or /analytics for trends."
+            ? "PIN saved. Next, send /results to browse by semester, /compare for the cumulative breakdown, /report for a PDF, or /analytics for trends."
             : "PIN saved. Next, send /login to connect your portal account.");
         }
         return;
@@ -287,13 +320,11 @@ export function createBot(env: BotEnv): Bot {
 
       const configured = await env.STATE.get("pin_digest");
       if (!configured || await digestPin(env.ENCRYPTION_KEY, text) !== configured) {
-        await ctx.reply("Wrong PIN. Send /results, /summary, or /analytics to try again.");
+        await ctx.reply("Wrong PIN. Send /results, /summary, /compare, /report, or /analytics to try again.");
         return;
       }
 
-      if (pin.target === "results") await showResults(ctx);
-      else if (pin.target === "summary") await showSummary(ctx);
-      else await showAnalytics(ctx);
+      await showProtected(ctx, pin.target);
       return;
     }
 
@@ -343,7 +374,7 @@ export function createBot(env: BotEnv): Bot {
       return;
     }
 
-    const pages = semesterPages(key, courses);
+    const pages = semesterPages(key, courses, results);
     const page = Number(ctx.match[2]);
     if (!pages[page]) return;
     const navigation = [];
@@ -375,7 +406,7 @@ export function createBot(env: BotEnv): Bot {
 
   bot.command("refresh", async (ctx) => {
     const { fetchedAt } = await refreshResults(env);
-    await ctx.reply(`Results refreshed at ${formatTime(fetchedAt)}. Next, send /results to browse by semester, /summary for your CGPA, or /analytics for trends.`);
+    await ctx.reply(`Results refreshed at ${formatTime(fetchedAt)}. Next, send /results to browse by semester, /compare for the cumulative breakdown, /report for a PDF, or /analytics for trends.`);
   });
 
   bot.command("status", async (ctx) => {
@@ -400,7 +431,7 @@ export function createBot(env: BotEnv): Bot {
         : "Last check: none yet",
       "Automatic checks run every 15 minutes.",
       session
-        ? "Next: send /refresh, /results, /summary, or /analytics."
+        ? "Next: send /refresh, /results, /compare, /report, /summary, or /analytics."
         : "Next: send /login to connect your account.",
     ];
 
