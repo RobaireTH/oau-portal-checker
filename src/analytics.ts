@@ -1,5 +1,5 @@
 import { escapeHtml } from "./format";
-import { isElective, isGraded, semesterLabel, summarize, totalsFor } from "./grades";
+import { isElective, isGraded, semesterProgress, summarize } from "./grades";
 import type { Course, Results } from "./types";
 
 const GRADES = ["A", "B", "C", "D", "E", "F"] as const;
@@ -32,14 +32,6 @@ export interface AcademicAnalytics {
   gradeDistribution: Record<(typeof GRADES)[number], number>;
 }
 
-function semesterOrder(a: string, b: string): number {
-  const left = Number(a);
-  const right = Number(b);
-  return Number.isFinite(left) && Number.isFinite(right)
-    ? left - right
-    : a.localeCompare(b, undefined, { numeric: true });
-}
-
 function extreme(points: TrendPoint[], field: "sgpa" | "cgpa", direction: "highest" | "lowest"): TrendPoint | null {
   const available = points.filter((point) => point[field] !== null);
   if (!available.length) return null;
@@ -62,20 +54,9 @@ function courseExtreme(courses: Course[], direction: "highest" | "lowest"): Cour
 }
 
 export function analyzeResults(results: Results): AcademicAnalytics {
-  let cumulativeUnits = 0;
-  let cumulativePoints = 0;
-  const trend = Object.keys(results).sort(semesterOrder).map((key) => {
-    const totals = totalsFor(results[key]);
-    cumulativeUnits += totals.units;
-    cumulativePoints += totals.points;
-    return {
-      key,
-      label: semesterLabel(key),
-      sgpa: totals.units ? totals.points / totals.units : null,
-      cgpa: cumulativeUnits ? cumulativePoints / cumulativeUnits : null,
-      units: totals.units,
-    } satisfies TrendPoint;
-  });
+  const trend = semesterProgress(results).map(({ key, label, sgpa, cgpa, units }) => ({
+    key, label, sgpa, cgpa, units,
+  }));
   const countedCourses = Object.values(results).flat().filter((course) => !isElective(course.code));
   const scoredCourses = countedCourses.filter((course) => course.score !== null && isGraded(course));
   const gradeDistribution = Object.fromEntries(GRADES.map((grade) => [grade, 0])) as AcademicAnalytics["gradeDistribution"];
@@ -136,6 +117,7 @@ export function formatAnalytics(analytics: AcademicAnalytics): string {
     "<b>Academic Analytics</b>",
     `Current CGPA: <b>${analytics.currentCgpa === null ? "n/a" : analytics.currentCgpa.toFixed(2)}</b> / 5.00`,
     `CGPA ATH: <b>${metric(analytics.peakCgpa, "cgpa")}</b>`,
+    "<i>CGPA ATH is the highest cumulative CGPA reached at a semester end.</i>",
     `SGPA ATH: <b>${metric(analytics.highestSgpa, "sgpa")}</b>`,
     `Lowest SGPA: ${metric(analytics.lowestSgpa, "sgpa")}`,
     `Latest movement: ${movement}`,

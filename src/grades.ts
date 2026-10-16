@@ -20,6 +20,19 @@ export interface Totals {
   points: number;
 }
 
+export interface SemesterProgress {
+  key: string;
+  label: string;
+  units: number;
+  points: number;
+  cumulativeUnits: number;
+  cumulativePoints: number;
+  sgpa: number | null;
+  cgpa: number | null;
+  sgpaChange: number | null;
+  cgpaChange: number | null;
+}
+
 export function isGraded(course: Course): boolean {
   return Object.hasOwn(GRADE_POINTS, course.grade);
 }
@@ -43,6 +56,46 @@ export function totalsFor(courses: Course[]): Totals {
 export function gpa(courses: Course[]): number | null {
   const { units, points } = totalsFor(courses);
   return units ? points / units : null;
+}
+
+export function semesterKeys(results: Results): string[] {
+  return Object.keys(results).sort((left, right) => {
+    const leftNumber = Number(left);
+    const rightNumber = Number(right);
+    return Number.isFinite(leftNumber) && Number.isFinite(rightNumber)
+      ? leftNumber - rightNumber
+      : left.localeCompare(right, undefined, { numeric: true });
+  });
+}
+
+export function semesterProgress(results: Results): SemesterProgress[] {
+  let cumulativeUnits = 0;
+  let cumulativePoints = 0;
+  let previousSgpa: number | null = null;
+  let previousCgpa: number | null = null;
+
+  return semesterKeys(results).map((key) => {
+    const totals = totalsFor(results[key]);
+    cumulativeUnits += totals.units;
+    cumulativePoints += totals.points;
+    const sgpa = totals.units ? totals.points / totals.units : null;
+    const cgpa = cumulativeUnits ? cumulativePoints / cumulativeUnits : null;
+    const point = {
+      key,
+      label: semesterLabel(key),
+      units: totals.units,
+      points: totals.points,
+      cumulativeUnits,
+      cumulativePoints,
+      sgpa,
+      cgpa,
+      sgpaChange: sgpa === null || previousSgpa === null ? null : sgpa - previousSgpa,
+      cgpaChange: cgpa === null || previousCgpa === null ? null : cgpa - previousCgpa,
+    };
+    if (sgpa !== null) previousSgpa = sgpa;
+    if (cgpa !== null) previousCgpa = cgpa;
+    return point;
+  });
 }
 
 export function summarize(results: Results) {
