@@ -8,6 +8,7 @@ Private Telegram bot that checks your OAU eportal results. Runs on Cloudflare Wo
 - `/login`: connect your portal account. The bot asks for your matric number and password in the chat, then deletes the password message.
 - `/logout`: sign out and delete the saved password
 - `/cancel`: cancel a login or PIN prompt
+- `/setpin`: create or change the PIN inside the private bot chat
 - `/results`: asks for your PIN, then lets you pick a semester from buttons and view its courses and SGPA
 - `/summary`: asks for your PIN, then shows CGPA, units attempted and passed, and failed courses
 
@@ -16,7 +17,7 @@ Private Telegram bot that checks your OAU eportal results. Runs on Cloudflare Wo
 
 Results are cached in a SQLite-backed Durable Object and refreshed every 15 minutes by the automatic check, so `/results` and `/summary` can be up to 15 minutes old. Use `/refresh` for the latest data. Large semesters have Previous/Next buttons. Result buttons expire five minutes after PIN authorization.
 
-The bot only accepts the owner's private chat. Login and PIN prompts cancel incompatible conversations. Passwords preserve whitespace and slash prefixes; `/cancel`, `/logout`, and `/login` are reserved during password entry.
+The bot only accepts the owner's private chat. Login and PIN prompts cancel incompatible conversations. Passwords preserve whitespace and slash prefixes; `/cancel`, `/logout`, `/login`, and `/setpin` are reserved during password entry. PIN messages are deleted after reading, and only a keyed digest is stored.
 
 ## How login works
 
@@ -56,7 +57,7 @@ Limits to know about:
    openssl rand -base64 32 # ENCRYPTION_KEY
    ```
 
-   Edit `.dev.vars` and replace all five placeholders with your BotFather token, numeric Telegram user ID, generated secrets, and chosen PIN. `.dev.vars` is gitignored; keep its values private.
+   Edit `.dev.vars` and replace all four placeholders with your BotFather token, numeric Telegram user ID, and generated secrets. `.dev.vars` is gitignored; keep its values private.
 
 5. Deploy:
 
@@ -68,7 +69,7 @@ Limits to know about:
 
 6. Check that the CLI prints `Telegram webhook registered` after deployment. No manual curl command is needed.
 
-7. In the chat with your bot, send `/login` and follow the prompts. This also saves the password for automatic re-login.
+7. In the chat with your bot, send `/setpin` to create your private results PIN, then send `/login` and follow the prompts. Login saves the password for automatic re-login. You can also create the PIN when `/results` or `/summary` first asks for it.
 
 Wrangler creates the Durable Object binding and applies the `v1` SQLite migration during deployment. No KV namespace is required. Existing KV data is not migrated or deleted; after upgrading from the KV version, send `/login` again. Automatic webhook registration sets `max_connections=1` to preserve conversational delivery order.
 

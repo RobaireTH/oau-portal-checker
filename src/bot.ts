@@ -7,6 +7,7 @@ import {
 } from "./credentials";
 import { escapeHtml, semesterPages, formatSummary } from "./format";
 import { semesterLabel } from "./grades";
+import { digestPin } from "./crypto";
 import { login } from "./portal";
 import { ACCOUNT_STATE_KEYS } from "./state";
 import type {
@@ -15,6 +16,7 @@ import type {
   LastCheck,
   LoginState,
   PinState,
+  ProtectedAction,
   Results,
   Session,
   ResultAccess,
@@ -25,6 +27,7 @@ const HELP = [
   "",
   "/login - connect your OAU portal account",
   "/logout - sign out and delete the saved password",
+  "/setpin - create or change your results PIN",
   "/results - pick a semester to view (asks for PIN)",
   "/summary - CGPA and unit totals (asks for PIN)",
   "/refresh - fetch the latest results from the portal now",
@@ -82,17 +85,21 @@ export function createBot(env: BotEnv): Bot {
     if (ctx.from?.id === ownerId && ctx.chat?.type === "private" && ctx.chat.id === ownerId) await next();
   });
 
-  async function askPin(ctx: Context, action: PinState["action"]) {
+  async function askPin(ctx: Context, target: ProtectedAction) {
     await env.STATE.delete("login_state");
     await env.STATE.delete("result_access");
+    const configured = await env.STATE.get("pin_digest");
+    const state: PinState = configured
+      ? { action: "verify", target }
+      : { action: "set", target };
     await env.STATE.put(
       "pin_state",
-      JSON.stringify({ action } satisfies PinState),
+      JSON.stringify(state),
       {
         expirationTtl: PIN_TIMEOUT_SECONDS,
       },
     );
-    await ctx.reply("Enter your PIN.");
+    await ctx.reply(configured ? "Enter your PIN." : "Create a 4 to 12 digit PIN.");
   }
 
   async function showResults(ctx: Context) {
@@ -128,9 +135,8 @@ export function createBot(env: BotEnv): Bot {
     }
   }
 
-  // Passwords are raw text, including whitespace and slash prefixes. These three commands cancel entry.
   bot.use(async (ctx, next) => {
-    if (!ctx.message?.text || /^\/(?:cancel|logout|login)(?:@\w+)?\s*$/.test(ctx.message.text)) return next();
+    if (!ctx.message?.text || /^\/(?:cancel|logout|login|setpin)(?:@\w+)?\s*$/.test(ctx.message.text)) return next();
     const state = await env.STATE.get<LoginState>("login_state", "json");
     if (state?.step === "password") await completeLogin(ctx, state, ctx.message.text);
     else await next();
@@ -156,6 +162,16 @@ export function createBot(env: BotEnv): Bot {
     await ctx.reply("Logged out. Your saved password has been deleted.");
   });
 
+  bot.command("setpin", async (ctx) => {
+    await env.STATE.write({}, ["login_state", "pin_state", "result_access"]);
+    await env.STATE.put(
+      "pin_state",
+      JSON.stringify({ action: "set" } satisfies PinState),
+      { expirationTtl: PIN_TIMEOUT_SECONDS },
+    );
+    await ctx.reply("Send a new 4 to 12 digit PIN. I'll delete your message after reading it.");
+  });
+
   bot.command("results", (ctx) => askPin(ctx, "results"));
   bot.command("summary", (ctx) => askPin(ctx, "summary"));
 
@@ -171,12 +187,26 @@ export function createBot(env: BotEnv): Bot {
       // Best effort: remove the PIN from the chat. Telegram may refuse, which is fine.
       await ctx.deleteMessage().catch(() => {});
 
-      if (text !== env.PIN) {
+      if (pin.action === "set") {
+        if (!/^\d{4,12}$/.test(text)) {
+          await env.STATE.put("pin_state", JSON.stringify(pin), { expirationTtl: PIN_TIMEOUT_SECONDS });
+          await ctx.reply("PIN must contain 4 to 12 digits. Try again.");
+          return;
+        }
+        await env.STATE.put("pin_digest", await digestPin(env.ENCRYPTION_KEY, text));
+        await ctx.reply("PIN saved.");
+        if (pin.target === "results") await showResults(ctx);
+        else if (pin.target === "summary") await showSummary(ctx);
+        return;
+      }
+
+      const configured = await env.STATE.get("pin_digest");
+      if (!configured || await digestPin(env.ENCRYPTION_KEY, text) !== configured) {
         await ctx.reply("Wrong PIN. Send /results or /summary to try again.");
         return;
       }
 
-      if (pin.action === "results") await showResults(ctx);
+      if (pin.target === "results") await showResults(ctx);
       else await showSummary(ctx);
       return;
     }

@@ -5,4 +5,3 @@ OWNER_ID="your numeric Telegram user ID"
 WEBHOOK_SECRET="your generated hex secret"
 # Generate with: openssl rand -base64 32
 ENCRYPTION_KEY="your generated base64 key"
-PIN="your chosen PIN"

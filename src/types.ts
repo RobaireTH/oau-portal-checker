@@ -15,8 +15,6 @@ export interface BotEnv {
   WEBHOOK_SECRET: string;
   /** Base64-encoded 32-byte key used to encrypt the saved portal password. */
   ENCRYPTION_KEY: string;
-  /** Required before /results and /summary. */
-  PIN: string;
 }
 
 export interface Course {
@@ -61,10 +59,11 @@ export interface LastCheck {
 export type LoginState =
   { step: "username" } | { step: "password"; username: string };
 
-/** Set while the bot waits for a PIN before running /results or /summary. */
-export interface PinState {
-  action: "results" | "summary";
-}
+export type ProtectedAction = "results" | "summary";
+
+export type PinState =
+  { action: "verify"; target: ProtectedAction } |
+  { action: "set"; target?: ProtectedAction };
 
 export interface ResultAccess {
   messageId: number;
