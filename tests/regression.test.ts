@@ -1,14 +1,16 @@
 import { afterEach, expect, test } from "bun:test";
 import type { Update } from "grammy/types";
+import { PDFDocument } from "pdf-lib";
 import { analyzeResults, analyticsChartRequest, formatAnalytics, renderAnalyticsChart } from "../src/analytics";
 import { createBot } from "../src/bot";
 import { loadResults } from "../src/cache";
 import { decrypt, digestPin, encrypt } from "../src/crypto";
-import { semesterPages } from "../src/format";
-import { gpa, summarize } from "../src/grades";
+import { formatSemesterComparison, semesterPages } from "../src/format";
+import { gpa, semesterProgress, summarize } from "../src/grades";
 import { Inbox } from "../src/inbox";
 import { checkForNewResults, diff, flatten, formatChanges } from "../src/notify";
 import { login, normalizeResults } from "../src/portal";
+import { generateAcademicReport } from "../src/report";
 import { ACCOUNT_STATE_KEYS, DurableStateStore } from "../src/state";
 import { isOwnerUpdate, processUpdate } from "../src/updates";
 import type { BotEnv, Course } from "../src/types";
@@ -57,7 +59,8 @@ async function setup(seed: Record<string, unknown> = {}) {
     calls.push({ method, payload });
     return { ok: true, result: method === "getMe" ? { id: 123, is_bot: true, first_name: "Test", username: "test_bot" }
       : method === "sendMessage" ? { message_id: 77, date: Math.floor(Date.now() / 1000), chat: { id: 42, type: "private" }, text: payload.text }
-      : method === "sendPhoto" ? { message_id: 78, date: Math.floor(Date.now() / 1000), chat: { id: 42, type: "private" }, photo: [] } : true } as any;
+      : method === "sendPhoto" ? { message_id: 78, date: Math.floor(Date.now() / 1000), chat: { id: 42, type: "private" }, photo: [] }
+      : method === "sendDocument" ? { message_id: 79, date: Math.floor(Date.now() / 1000), chat: { id: 42, type: "private" }, document: {} } : true } as any;
   });
   return { storage, state, env, bot, calls };
 }
@@ -263,6 +266,24 @@ test("analytics calculates chronological GPA trends and performance extremes", (
   expect(analyticsChartRequest(analytics).chart.data.datasets).toHaveLength(2);
 });
 
+test("semester results and comparison expose cumulative CGPA at every endpoint", () => {
+  const results = {
+    "121": [{ ...course, code: "CSC101", score: 75, grade: "A" }],
+    "122": [{ ...course, code: "CSC102", score: 65, grade: "B" }],
+  };
+  const progress = semesterProgress(results);
+  expect(progress.map(semester => semester.cgpa)).toEqual([5, 4.5]);
+  expect(progress[1]).toMatchObject({ units: 3, points: 12, cumulativeUnits: 6, cumulativePoints: 27 });
+  const semester = semesterPages("122", results["122"], results)[0];
+  expect(semester).toContain("SGPA: <b>4.00</b>");
+  expect(semester).toContain("CGPA after semester: <b>4.50</b>");
+  expect(semester).toContain("27.0 cumulative points / 6 units");
+  const comparison = formatSemesterComparison(results);
+  expect(comparison).toContain("Semester Comparison");
+  expect(comparison).toContain("CGPA ATH: <b>5.00</b> after 100L · 1st Semester");
+  expect(comparison).toContain("-0.50");
+});
+
 test("analytics chart uses aggregate data and validates the PNG response", async () => {
   const analytics = analyzeResults({ "121": [course] });
   let requestBody: any;
@@ -284,6 +305,29 @@ test("analytics is PIN protected and sends a chart with statistics", async () =>
   expect(calls.some(c => c.method === "sendPhoto" && c.payload.caption.includes("Academic Analytics"))).toBe(true);
 });
 
+test("comparison and PDF report are PIN protected", async () => {
+  const results = { "121": [course], "122": [{ ...course, code: "CSC202", score: 65, grade: "B" }] };
+  const { bot, calls } = await setup({ session, results: { ...cache, results }, pin_digest: await digestPin(key, "1234") });
+  await processUpdate(bot, message("/compare"));
+  await processUpdate(bot, message("1234"));
+  expect(calls.some(c => c.method === "sendMessage" && c.payload.text.includes("Semester Comparison"))).toBe(true);
+  await processUpdate(bot, message("/report"));
+  await processUpdate(bot, message("1234"));
+  expect(calls.some(c => c.method === "sendDocument" && c.payload.caption.includes("Academic report"))).toBe(true);
+});
+
+test("academic report is a readable multipage PDF", async () => {
+  const results = {
+    "121": [course],
+    "122": [{ ...course, code: "SEA001", title: "Elective", score: 61, grade: "B" }],
+  };
+  const bytes = await generateAcademicReport(results, new Date("2026-10-16T12:00:00Z"));
+  expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe("%PDF-");
+  const report = await PDFDocument.load(bytes);
+  expect(report.getPageCount()).toBeGreaterThanOrEqual(3);
+  expect(report.getTitle()).toBe("IfeMate Academic Report");
+});
+
 test("large semester tables paginate and retain the full-semester GPA", () => {
   const courses = Array.from({ length: 200 }, (_, i) => ({ ...course, code: `CSC${i + 200}`, title: "<&>".repeat(30), grade: i % 2 ? "B" : "A" }));
   const pages = semesterPages("121", courses);
@@ -302,6 +346,17 @@ test("removals and metadata corrections are detected and formatted safely", () =
   expect(diff(previous, flatten({ "121": [{ ...course, unit: 4 }] }))).toHaveLength(1);
   const changes = diff({}, flatten({ "121": Array.from({ length: 200 }, (_, i) => ({ ...course, code: `CSC${i}`, title: "<&>".repeat(100) })) }));
   for (const text of formatChanges(changes)) expect(text.length).toBeLessThan(4096);
+});
+
+test("result alerts explain semester and cumulative GPA impact", () => {
+  const previousResults = { "121": [{ ...course, score: 65, grade: "B" }] };
+  const currentResults = { "121": [{ ...course, score: 75, grade: "A" }] };
+  const changes = diff(flatten(previousResults), flatten(currentResults));
+  const alert = formatChanges(changes, previousResults, currentResults).join("\n");
+  expect(alert).toContain("changed from 65 (B), 3 units to 75 (A), 3 units");
+  expect(alert).toContain("Calculated GPA impact");
+  expect(alert).toContain("100L · 1st Semester SGPA: 4.00 -&gt; 5.00 (+1.00)");
+  expect(alert).toContain("Current CGPA: 4.00 -&gt; 5.00 (+1.00)");
 });
 
 test("failed notification chunk resumes after already-delivered chunks", async () => {
