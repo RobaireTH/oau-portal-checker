@@ -124,21 +124,20 @@ test("starting login cancels a pending PIN prompt", async () => {
   expect(calls.some(c => c.payload.text?.startsWith("Wrong PIN"))).toBe(false);
 });
 
-test("clear deletes tracked incoming and outgoing messages in batches", async () => {
+test("clear sweeps prior message IDs and tracked history in batches", async () => {
   const date = Math.floor(Date.now() / 1000);
   const tracked = [{ id: 77, date }, ...Array.from({ length: 205 }, (_, index) => ({ id: index + 1000, date }))];
   const { bot, state, calls } = await setup({ message_history: tracked });
-  const start = message("/start");
-  await processUpdate(bot, start);
   const clear = message("/clear");
   await processUpdate(bot, clear);
   const deletions = calls.filter(c => c.method === "deleteMessages");
   const deleted = deletions.flatMap(c => c.payload.message_ids);
   expect(deletions).toHaveLength(3);
   expect(deletions.every(c => c.payload.message_ids.length <= 100)).toBe(true);
-  expect(deleted).toContain(start.message!.message_id);
   expect(deleted).toContain(clear.message!.message_id);
+  expect(deleted).toContain(clear.message!.message_id - 1);
   expect(deleted).toContain(77);
+  expect(deleted).toContain(1204);
   expect(await state.get("message_history")).toBeNull();
 });
 

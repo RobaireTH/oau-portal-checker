@@ -18,7 +18,7 @@ Private Telegram bot that checks your OAU eportal results. Runs on Cloudflare Wo
 
 Results are cached in a SQLite-backed Durable Object and refreshed every 15 minutes by the automatic check, so `/results` and `/summary` can be up to 15 minutes old. Use `/refresh` for the latest data. Large semesters have Previous/Next buttons. Result buttons expire five minutes after PIN authorization.
 
-The bot only accepts the owner's private chat. Login and PIN prompts cancel incompatible conversations. Passwords preserve whitespace and slash prefixes; `/cancel`, `/clear`, `/logout`, `/login`, and `/setpin` are reserved during password entry. PIN messages are deleted after reading, and only a keyed digest is stored. `/clear` silently removes messages recorded by this deployment that are still inside Telegram's 48-hour deletion window; the Bot API cannot list or erase older untracked chat history.
+The bot only accepts the owner's private chat. Login and PIN prompts cancel incompatible conversations. Passwords preserve whitespace and slash prefixes; `/cancel`, `/clear`, `/logout`, `/login`, and `/setpin` are reserved during password entry. PIN messages are deleted after reading, and only a keyed digest is stored. `/clear` silently removes tracked messages and sweeps up to 1,000 recent message IDs in the private chat. Telegram still prevents the bot from deleting messages outside its 48-hour deletion window.
 
 ## How login works
 
