@@ -5,7 +5,7 @@ import { analyzeResults, analyticsChartRequest, formatAnalytics, renderAnalytics
 import { createBot } from "../src/bot";
 import { loadResults } from "../src/cache";
 import { decrypt, digestPin, encrypt } from "../src/crypto";
-import { formatSemesterComparison, semesterPages } from "../src/format";
+import { formatSemesterComparison, formatSummary, semesterPages } from "../src/format";
 import { gpa, semesterProgress, summarize } from "../src/grades";
 import { Inbox } from "../src/inbox";
 import { checkForNewResults, diff, flatten, formatChanges } from "../src/notify";
@@ -354,9 +354,44 @@ test("result alerts explain semester and cumulative GPA impact", () => {
   const changes = diff(flatten(previousResults), flatten(currentResults));
   const alert = formatChanges(changes, previousResults, currentResults).join("\n");
   expect(alert).toContain("changed from 65 (B), 3 units to 75 (A), 3 units");
-  expect(alert).toContain("Calculated GPA impact");
+  expect(alert).toContain("Calculated impact");
   expect(alert).toContain("100L · 1st Semester SGPA: 4.00 -&gt; 5.00 (+1.00)");
   expect(alert).toContain("Current CGPA: 4.00 -&gt; 5.00 (+1.00)");
+});
+
+test("elective alerts and summaries track graduation progress without changing GPA", () => {
+  const elective = { ...course, code: "SEA001", title: "Special Elective", unit: 2, score: 61, grade: "B" };
+  const previousResults = { "121": [course] };
+  const currentResults = { "121": [course, elective] };
+  const changes = diff(flatten(previousResults), flatten(currentResults));
+  const alert = formatChanges(changes, previousResults, currentResults).join("\n");
+  expect(alert).toContain("SEA001 [elective]");
+  expect(alert).toContain("Current CGPA: 5.00 -&gt; 5.00 (no change)");
+  expect(alert).toContain("Elective courses passed: 0 -&gt; 1 (+1)");
+  expect(alert).toContain("Elective units passed: 0 -&gt; 2 (+2)");
+  expect(alert).toContain("tracked for graduation");
+  const summary = formatSummary(currentResults);
+  expect(summary).toContain("<b>Elective Progress</b>");
+  expect(summary).toContain("Passed courses: 1 · Passed units: 2");
+  const semester = semesterPages("121", currentResults["121"], currentResults)[0];
+  expect(semester).toContain("B elective");
+  expect(semester).toContain("tracked for graduation");
+  const tracked = summarize({ "121": [
+    course,
+    elective,
+    { ...elective, code: "LIB001", unit: 0 },
+    { ...elective, code: "SEM002", grade: "F", score: 20 },
+    { ...elective, code: "SEO003", grade: "", score: null },
+  ] }).electives;
+  expect(tracked).toEqual({
+    totalCourses: 4,
+    passedCourses: 2,
+    passedUnits: 2,
+    failedCourses: 1,
+    failedUnits: 2,
+    pendingCourses: 1,
+    pendingUnits: 2,
+  });
 });
 
 test("failed notification chunk resumes after already-delivered chunks", async () => {
