@@ -59,7 +59,7 @@ export interface LastCheck {
 export type LoginState =
   { step: "username" } | { step: "password"; username: string };
 
-export type ProtectedAction = "analytics" | "results" | "summary";
+export type ProtectedAction = "analytics" | "compare" | "report" | "results" | "summary";
 
 export type PinState =
   { action: "verify"; target: ProtectedAction } |
