@@ -110,6 +110,20 @@ function metric(point: TrendPoint | null, field: "sgpa" | "cgpa"): string {
   return `${point[field]!.toFixed(2)} · ${escapeHtml(point.label.slice(0, 40))}`;
 }
 
+function gradeTable(distribution: AcademicAnalytics["gradeDistribution"]): string {
+  const total = GRADES.reduce((sum, grade) => sum + distribution[grade], 0);
+  return [
+    "Grade Count   Share  Distribution",
+    ...GRADES.map((grade) => {
+      const count = distribution[grade];
+      const share = total ? count / total * 100 : 0;
+      const width = count ? Math.max(1, Math.round(share / 100 * 12)) : 0;
+      const bar = "#".repeat(width).padEnd(12);
+      return `${grade.padEnd(5)} ${String(count).padStart(5)} ${`${share.toFixed(1)}%`.padStart(7)}  ${bar}`;
+    }),
+  ].join("\n");
+}
+
 export function formatAnalytics(analytics: AcademicAnalytics): string {
   const passRate = analytics.unitsAttempted
     ? analytics.unitsPassed / analytics.unitsAttempted * 100
@@ -117,7 +131,6 @@ export function formatAnalytics(analytics: AcademicAnalytics): string {
   const movement = analytics.latestChange === null
     ? "n/a"
     : `${analytics.latestChange >= 0 ? "+" : ""}${analytics.latestChange.toFixed(2)} vs previous semester`;
-  const grades = GRADES.map((grade) => `${grade}: ${analytics.gradeDistribution[grade]}`).join(" · ");
 
   return [
     "<b>Academic Analytics</b>",
@@ -130,7 +143,8 @@ export function formatAnalytics(analytics: AcademicAnalytics): string {
     `Highest score: ${analytics.highestScore ? `${escapeHtml(analytics.highestScore.code.slice(0, 20))} · ${analytics.highestScore.score}%` : "n/a"}`,
     `Lowest score: ${analytics.lowestScore ? `${escapeHtml(analytics.lowestScore.code.slice(0, 20))} · ${analytics.lowestScore.score}%` : "n/a"}`,
     `Units passed: ${analytics.unitsPassed} / ${analytics.unitsAttempted}${passRate === null ? "" : ` · ${passRate.toFixed(1)}%`}`,
-    `Grades: ${grades}`,
+    "<b>Grade distribution</b>",
+    `<pre>${gradeTable(analytics.gradeDistribution).trimEnd()}</pre>`,
     "<i>Electives and pending grades are excluded from GPA metrics.</i>",
   ].join("\n");
 }
