@@ -132,7 +132,7 @@ test("first protected command creates the PIN inside Telegram", async () => {
   expect(stored).toBe(await digestPin(key, "1234"));
   expect(stored).not.toContain("1234");
   expect(calls.some(c => c.method === "deleteMessage")).toBe(true);
-  expect(calls.some(c => c.method === "sendMessage" && c.payload.text === "PIN saved.")).toBe(true);
+  expect(calls.some(c => c.method === "sendMessage" && c.payload.text === "PIN saved. Loading your semester results now.")).toBe(true);
   expect(calls.some(c => c.method === "sendMessage" && c.payload.text.startsWith("Pick a semester"))).toBe(true);
 });
 
@@ -146,7 +146,7 @@ test("PIN setup rejects invalid values without ending the prompt", async () => {
 });
 
 test("password whitespace and slash prefixes survive login; old account data is reset", async () => {
-  const { bot, state } = await setup({ login_state: { step: "password", username: "TEST/2000/000" }, session, results: cache, snapshot: {} });
+  const { bot, state, calls } = await setup({ login_state: { step: "password", username: "TEST/2000/000" }, session, results: cache, snapshot: {} });
   let sentPassword: string | undefined;
   globalThis.fetch = (async (url, init) => {
     if (String(url).endsWith("/api/login")) {
@@ -162,6 +162,7 @@ test("password whitespace and slash prefixes survive login; old account data is 
   expect((await state.get<any>("session", "json"))?.studentId).toBe(2);
   const encrypted = await state.get<any>("credentials", "json");
   expect(JSON.parse(await decrypt(key, encrypted)).password).toBe("/secret ");
+  expect(calls.some(c => c.payload.text?.includes("/refresh") && c.payload.text?.includes("/results"))).toBe(true);
 });
 
 test("credential encryption failure cannot replace the active account", async () => {
