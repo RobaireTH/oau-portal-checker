@@ -1,4 +1,4 @@
-import { isGraded, semesterLabel, semesterProgress, summarize, type SemesterProgress } from "./grades";
+import { isElective, isGraded, semesterLabel, semesterProgress, summarize, type SemesterProgress } from "./grades";
 import type { Course, Results } from "./types";
 
 export function escapeHtml(text: string): string {
@@ -17,8 +17,10 @@ export function formatSemester(key: string, courses: Course[], results: Results 
   const completeCourses = results[key] ?? courses;
   const header = `${"Code".padEnd(8)}${"Title".padEnd(30)}${"Unit".padStart(4)} ${"Score".padStart(5)}  Grade`;
   const rows = courses.map(
-    (course) =>
-      `${truncate(course.code, 8).padEnd(8)}${truncate(course.title, 29).padEnd(30)}${String(course.unit).padStart(4)} ${String(course.score ?? "-").padStart(5)}  ${truncate(course.grade || "Pending", 12)}`,
+    (course) => {
+      const grade = `${course.grade || "Pending"}${isElective(course.code) ? " elective" : ""}`;
+      return `${truncate(course.code, 8).padEnd(8)}${truncate(course.title, 29).padEnd(30)}${String(course.unit).padStart(4)} ${String(course.score ?? "-").padStart(5)}  ${truncate(grade, 12)}`;
+    },
   );
 
   const progress = semesterProgress(results).find((semester) => semester.key === key);
@@ -34,7 +36,8 @@ export function formatSemester(key: string, courses: Course[], results: Results 
     `<pre>${escapeHtml([header, ...rows].join("\n"))}</pre>`,
     `SGPA: <b>${decimal(sgpa)}</b> / 5.00 · ${points.toFixed(1)} points / ${units} units`,
     `CGPA after semester: <b>${decimal(cgpa)}</b> / 5.00 · ${cumulativePoints.toFixed(1)} cumulative points / ${cumulativeUnits} units`,
-    ...(completeCourses.some((course) => !isGraded(course)) ? ["<i>Electives, pending, and unrecognized grades are excluded from GPA calculations.</i>"] : []),
+    ...(completeCourses.some((course) => isElective(course.code)) ? ["<i>Electives are tracked for graduation and excluded only from SGPA and CGPA.</i>"] : []),
+    ...(completeCourses.some((course) => !isElective(course.code) && !isGraded(course)) ? ["<i>Pending or unrecognized non-elective grades are excluded from GPA calculations.</i>"] : []),
   ].join("\n");
 }
 
@@ -71,7 +74,11 @@ export function formatSummary(results: Results): string {
     `Units passed: ${summary.unitsPassed}`,
     `Failed courses: ${summary.failed}`,
     `Pending or unrecognized grades: ${summary.pending}`,
-    "<i>Electives are not counted.</i>",
+    "<b>Elective Progress</b>",
+    `Passed courses: ${summary.electives.passedCourses} · Passed units: ${summary.electives.passedUnits}`,
+    `Failed courses: ${summary.electives.failedCourses} · Failed units: ${summary.electives.failedUnits}`,
+    `Pending courses: ${summary.electives.pendingCourses} · Pending units: ${summary.electives.pendingUnits}`,
+    "<i>Electives are tracked for graduation and excluded only from SGPA and CGPA.</i>",
   ].join("\n");
 }
 

@@ -20,6 +20,16 @@ export interface Totals {
   points: number;
 }
 
+export interface ElectiveProgress {
+  totalCourses: number;
+  passedCourses: number;
+  passedUnits: number;
+  failedCourses: number;
+  failedUnits: number;
+  pendingCourses: number;
+  pendingUnits: number;
+}
+
 export interface SemesterProgress {
   key: string;
   label: string;
@@ -35,6 +45,22 @@ export interface SemesterProgress {
 
 export function isGraded(course: Course): boolean {
   return Object.hasOwn(GRADE_POINTS, course.grade);
+}
+
+export function electiveProgress(courses: Course[]): ElectiveProgress {
+  const electives = courses.filter((course) => isElective(course.code));
+  const passed = electives.filter((course) => isGraded(course) && course.grade !== "F");
+  const failed = electives.filter((course) => course.grade === "F");
+  const pending = electives.filter((course) => !isGraded(course));
+  return {
+    totalCourses: electives.length,
+    passedCourses: passed.length,
+    passedUnits: passed.reduce((sum, course) => sum + course.unit, 0),
+    failedCourses: failed.length,
+    failedUnits: failed.reduce((sum, course) => sum + course.unit, 0),
+    pendingCourses: pending.length,
+    pendingUnits: pending.reduce((sum, course) => sum + course.unit, 0),
+  };
 }
 
 export function totalsFor(courses: Course[]): Totals {
@@ -99,9 +125,8 @@ export function semesterProgress(results: Results): SemesterProgress[] {
 }
 
 export function summarize(results: Results) {
-  const courses = Object.values(results)
-    .flat()
-    .filter((course) => !isElective(course.code));
+  const allCourses = Object.values(results).flat();
+  const courses = allCourses.filter((course) => !isElective(course.code));
   const totals = totalsFor(courses);
 
   return {
@@ -113,6 +138,7 @@ export function summarize(results: Results) {
       .reduce((sum, course) => sum + course.unit, 0),
     failed: courses.filter((course) => course.grade === "F").length,
     pending: courses.filter((course) => !isGraded(course)).length,
+    electives: electiveProgress(allCourses),
   };
 }
 
