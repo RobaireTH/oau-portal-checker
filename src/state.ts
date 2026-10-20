@@ -7,7 +7,7 @@ interface StoredValue {
 
 export const ACCOUNT_STATE_KEYS = [
   "session", "credentials", "results", "snapshot", "last_check", "login_reminder",
-  "pending_notification", "login_state", "pin_state", "result_access",
+  "pending_notification", "login_state", "pin_state", "result_access", "project_access",
 ];
 
 export class DurableStateStore implements StateStore {
