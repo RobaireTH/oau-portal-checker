@@ -5,11 +5,14 @@ import { analyzeResults, analyticsChartRequest, formatAnalytics, renderAnalytics
 import { createBot } from "../src/bot";
 import { loadResults } from "../src/cache";
 import { decrypt, digestPin, encrypt } from "../src/crypto";
+import { PROGRAMME_IDS, PROGRAMMES } from "../src/curriculum";
 import { formatSemesterComparison, formatSummary, semesterPages } from "../src/format";
 import { gpa, semesterProgress, summarize } from "../src/grades";
 import { Inbox } from "../src/inbox";
 import { checkForNewResults, diff, flatten, formatChanges } from "../src/notify";
 import { login, normalizeResults } from "../src/portal";
+import { formatProjectionPages } from "../src/projection-format";
+import { projectHonors } from "../src/projection";
 import { generateAcademicReport } from "../src/report";
 import { ACCOUNT_STATE_KEYS, DurableStateStore } from "../src/state";
 import { privateChatId, processUpdate } from "../src/updates";
@@ -90,6 +93,7 @@ test("fresh bot initializes and dispatches webhook updates", async () => {
   await processUpdate(bot, message("/start"));
   await processUpdate(bot, message("/help"));
   expect(calls.filter(c => c.method === "getMe")).toHaveLength(1);
+  expect(calls.some(c => c.method === "setMyCommands" && c.payload.commands.some((command: { command: string }) => command.command === "project"))).toBe(true);
   expect(calls.filter(c => c.method === "sendMessage")).toHaveLength(2);
   expect(calls.filter(c => c.method === "sendMessage").every(c => c.payload.text.includes("Start here"))).toBe(true);
   expect(calls.filter(c => c.method === "sendMessage").every(c => c.payload.text.includes("isolated from every other user"))).toBe(true);
@@ -252,6 +256,215 @@ test("numeric strings are normalized and pending grades do not corrupt GPA", () 
   expect(summarize(results)).toMatchObject({ pending: 1, unitsPassed: 6, unitsAttempted: 6 });
   expect(() => normalizeResults({ result: null })).toThrow();
   expect(() => normalizeResults({ result: { "121": [{ course_code: "A", course_title: "B", credit_unit: "bad" }] } })).toThrow();
+});
+
+test("departmental curricula reconcile to programme-specific graduation totals", () => {
+  for (const id of PROGRAMME_IDS) {
+    const programme = PROGRAMMES[id];
+    const fixed = programme.requiredCourses.reduce((sum, item) => sum + item.unit, 0);
+    const choices = programme.choiceGroups.reduce((sum, item) => sum + item.unit, 0);
+    const additional = programme.additionalRequirements.reduce((sum, item) => sum + item.unit, 0);
+    expect(fixed + choices + additional + programme.reconciliationUnit).toBe(programme.gpaUnit);
+    expect(programme.gpaUnit + programme.specialElectiveUnit).toBe(programme.degreeUnit);
+    expect(new Set(programme.requiredCourses.map(item => item.code)).size).toBe(programme.requiredCourses.length);
+  }
+});
+
+test("fully completed programme curricula leave no projected GPA units", () => {
+  for (const id of PROGRAMME_IDS) {
+    const programme = PROGRAMMES[id];
+    const completed: Course[] = programme.requiredCourses.map(item => ({
+      code: item.code, title: item.title, unit: item.unit, score: 70, grade: "A",
+    }));
+    for (const group of programme.choiceGroups) {
+      let units = 0;
+      for (const item of group.options) {
+        if (units >= group.unit) break;
+        completed.push({ code: item.code, title: item.title, unit: item.unit, score: 70, grade: "A" });
+        units += item.unit;
+      }
+    }
+    for (const item of programme.additionalRequirements) {
+      completed.push({ code: "MTH999", title: item.title, unit: item.unit, score: 70, grade: "A" });
+    }
+    completed.push({ code: "GEN999", title: "Handbook balance", unit: programme.reconciliationUnit, score: 70, grade: "A" });
+    const projection = projectHonors({ completed }, id, "first-class");
+    expect(projection.currentUnits).toBe(programme.gpaUnit);
+    expect(projection.completedCurriculumUnits).toBe(programme.gpaUnit);
+    expect(projection.remainingUnits).toBe(0);
+    expect(projection.remainingCourses).toHaveLength(0);
+    expect(projection.targetIntent).toBe("maintain");
+  }
+});
+
+test("projection adds portal-absent future courses from only the selected programme", () => {
+  const results = { "121": [{ ...course, code: "CSC101", title: "Introduction to Computing I", unit: 2 }] };
+  const science = projectHonors(results, "computer-science", "first-class");
+  const economics = projectHonors(results, "computer-science-economics", "first-class");
+  const engineering = projectHonors(results, "computer-engineering", "first-class");
+  expect(science.remainingCourses.some(item => item.code === "CSC501")).toBe(true);
+  expect(science.remainingCourses.some(item => item.code === "MTH205")).toBe(true);
+  expect(science.remainingCourses.some(item => item.code === "ECN201")).toBe(false);
+  expect(economics.remainingCourses.some(item => item.code === "ECN201")).toBe(true);
+  expect(economics.remainingCourses.some(item => item.code === "SSC102")).toBe(true);
+  expect(economics.remainingCourses.some(item => item.code === "MTH205")).toBe(false);
+  expect(engineering.remainingCourses.some(item => item.code === "EEE201")).toBe(true);
+  expect(engineering.remainingCourses.some(item => item.code === "ECN201")).toBe(false);
+});
+
+test("projection handles direct entry, carryovers, pending grades, and completed choices", () => {
+  const results = { "125": [
+    { ...course, code: "CSC201", unit: 3, score: 20, grade: "F" },
+    { ...course, code: "CSC202", unit: 2, score: null, grade: "" },
+    { ...course, code: "CSC507", unit: 2, score: 72, grade: "A" },
+    { ...course, code: "CSC514", unit: 2, score: 66, grade: "B" },
+  ] };
+  const projection = projectHonors(results, "computer-science", "first-class");
+  expect(projection.entryRoute).toBe("direct-entry");
+  expect(projection.curriculumGpaUnits).toBe(159);
+  expect(projection.remainingCourses.some(item => item.code === "MTH101")).toBe(false);
+  expect(projection.remainingCourses.find(item => item.code === "CSC201")?.repeat).toBe(true);
+  expect(projection.remainingCourses.find(item => item.code === "CSC202")?.repeat).toBe(false);
+  expect(projection.remainingCourses.some(item => item.title === "500L Harmattan Computer Science option")).toBe(false);
+  const rainChoice = projection.remainingCourses.find(item => item.title === "500L Rain Computer Science options");
+  expect(rainChoice?.unit).toBe(2);
+  expect(rainChoice?.choices?.some(item => item.code === "CSC514")).toBe(false);
+});
+
+test("selected target produces term grade tables and cumulative checkpoints", () => {
+  const results = { "123": [{ ...course, code: "CSC201", unit: 3, score: 42, grade: "E" }] };
+  const projection = projectHonors(results, "computer-science", "first-class");
+  expect(projection.selectedTarget.name).toBe("First Class");
+  expect(projection.targetIntent).toBe("attain");
+  expect(projection.highestAttainableClass?.name).toBe("First Class");
+  expect(projection.termPlans.reduce((sum, term) => sum + term.units, 0)).toBe(projection.remainingUnits);
+  expect(projection.termPlans.every(term => term.courses.every(item => item.expectedGrade === "A"))).toBe(true);
+  expect(projection.termPlans.at(-1)!.projectedCgpa).toBeCloseTo(projection.maximumCgpa!);
+  const pages = formatProjectionPages(projection);
+  expect(pages.some(page => page.includes("Term 1 of"))).toBe(true);
+  expect(pages.some(page => page.includes("Course / requirement") && page.includes("Units") && page.includes("Aim"))).toBe(true);
+  expect(pages.some(page => page.includes("CSC501 Introduction to Operations Research"))).toBe(true);
+  expect(pages.some(page => page.includes("Recommended term GPA") && page.includes("Highest-attainable checkpoint"))).toBe(true);
+  expect(pages.some(page => page.includes("not registration advice"))).toBe(true);
+  expect(pages.every(page => page.length < 4096)).toBe(true);
+});
+
+test("unattainable selected target produces an honest all-A recovery plan", () => {
+  const results = { completed: [{ ...course, code: "GEN999", unit: 200, score: 20, grade: "F" }] };
+  const projection = projectHonors(results, "computer-science", "first-class");
+  expect(projection.selectedTarget.attainable).toBe(false);
+  expect(projection.termPlans.every(term => term.courses.every(item => item.expectedGrade === "A"))).toBe(true);
+  expect(projection.termPlans.at(-1)!.projectedCgpa).toBeLessThan(4.5);
+  expect(formatProjectionPages(projection)[0]).toContain("above the current mathematical ceiling");
+});
+
+test("an impossible floor stays within the five-point scale", () => {
+  const programme = PROGRAMMES["computer-science"];
+  const completedCodes = [
+    "MTH101", "PHY101", "PHY107", "CHM101", "CHM103", "CSC101", "TPD101",
+    "MTH102", "MTH104", "PHY102", "PHY108", "CHM102", "CHM104", "CSC102",
+    "CSC201", "CPE203", "MTH201", "MTH205", "STT201", "MEE203", "CSC202",
+    "CPE204", "CPE206", "MTH202", "MTH306", "STT202", "MEE204", "MTH302",
+    "CPE301", "CSC305", "CSC307", "CSC311", "CSC315", "CSC317", "MTH301",
+    "CSC302", "CSC306",
+  ];
+  const bCodes = new Set(completedCodes.slice(0, 21));
+  const completed = completedCodes.map((code) => {
+    const item = programme.requiredCourses.find((candidate) => candidate.code === code)!;
+    const grade = bCodes.has(code) ? "B" : "C";
+    return { code, title: item.title, unit: item.unit, score: grade === "B" ? 65 : 55, grade };
+  });
+  completed.push({ code: "CSC312", title: "Systems Analysis and Design Methodologies", unit: 3, score: 30, grade: "F" });
+  const projection = projectHonors({ completed }, "computer-science", "first-class");
+  const overview = formatProjectionPages(projection)[0];
+  expect(projection.currentUnits).toBe(101);
+  expect(projection.currentCgpa).toBeCloseTo(3.45, 2);
+  expect(projection.remainingUnits).toBe(91);
+  expect(projection.maximumCgpa).toBeCloseTo(4.18, 2);
+  expect(projection.termPlans.find((term) => term.semester === "400L Rain (SIWES)")?.courses.map((item) => item.course.code).sort()).toEqual(["CSC200", "CSC300", "CSC400"]);
+  expect(projection.termPlans.some((term) => term.semester === "200L Long Vacation" || term.semester === "300L Long Vacation")).toBe(false);
+  expect(overview).toContain("not attainable within the 5.00 scale");
+  expect(overview).toContain("Straight As in all remaining courses produce at most 4.18");
+  expect(overview).toContain("0.32 below the 4.50 floor");
+  expect(overview).not.toContain("5.67 remaining average");
+});
+
+test("industrial training courses share the Part IV Rain SIWES term", () => {
+  const cases = [
+    ["computer-science", ["CSC200", "CSC300", "CSC400"]],
+    ["computer-science-economics", ["CSC200", "CSC300", "CSC400"]],
+    ["computer-engineering", ["CPE200", "CPE300", "CPE400"]],
+  ] as const;
+  for (const [programmeId, codes] of cases) {
+    const projection = projectHonors({}, programmeId, "first-class");
+    const siwes = projection.termPlans.filter((term) => term.semester === "400L Rain (SIWES)");
+    expect(siwes).toHaveLength(1);
+    expect(siwes[0].units).toBe(12);
+    expect(siwes[0].courses.map((item) => item.course.code).sort()).toEqual([...codes].sort());
+  }
+});
+
+test("a lower selected floor still recommends the highest attainable result", () => {
+  const results = { "123": [{ ...course, code: "CSC201", unit: 3, score: 42, grade: "E" }] };
+  const projection = projectHonors(results, "computer-science", "pass");
+  const overview = formatProjectionPages(projection)[0];
+  expect(projection.selectedTarget.name).toBe("Pass");
+  expect(projection.highestAttainableClass?.name).toBe("First Class");
+  expect(projection.termPlans.every(term => term.courses.every(item => item.expectedGrade === "A"))).toBe(true);
+  expect(overview).toContain("Pass is only a safety floor");
+  expect(overview).toContain("Do not plan downward");
+  expect(overview).toContain("First Class is still attainable");
+  expect(overview).toContain("Higher milestones:");
+  expect(overview).toContain("Third Class (1.50) → Second Class Lower (2.40) → Second Class Upper (3.50) → First Class (4.50)");
+});
+
+test("maintaining first class never recommends B grades", () => {
+  const results = { "123": [
+    { ...course, code: "CSC201", unit: 3, score: 75, grade: "A" },
+    { ...course, code: "CPE203", unit: 3, score: 65, grade: "B" },
+  ] };
+  const projection = projectHonors(results, "computer-science", "first-class");
+  expect(projection.currentCgpa).toBe(4.5);
+  expect(projection.targetIntent).toBe("maintain");
+  expect(projection.termPlans.every(term => term.courses.every(item => item.expectedGrade === "A"))).toBe(true);
+  expect(formatProjectionPages(projection)[0]).toContain("does not recommend coasting");
+});
+
+test("programme and target combinations produce valid Telegram pages and attainable finishes", () => {
+  const results = { "123": [{ ...course, code: "CSC201", unit: 3, score: 42, grade: "E" }] };
+  const targetIds = ["first-class", "second-class-upper", "second-class-lower", "third-class", "pass"] as const;
+  for (const programmeId of PROGRAMME_IDS) {
+    for (const targetId of targetIds) {
+      const projection = projectHonors(results, programmeId, targetId);
+      const finalCgpa = projection.termPlans.at(-1)?.projectedCgpa;
+      if (projection.remainingUnits) expect(finalCgpa).toBeCloseTo(projection.maximumCgpa!);
+      expect(projection.termPlans.every(term => term.courses.every(item => item.expectedGrade === "A"))).toBe(true);
+      expect(formatProjectionPages(projection).every(page => page.length < 4096)).toBe(true);
+    }
+  }
+});
+
+test("project requires a target and navigates one term table at a time", async () => {
+  const { bot, state, calls } = await setup({ session, results: cache, pin_digest: await digestPin(key, "1234") });
+  await processUpdate(bot, message("/project"));
+  await processUpdate(bot, message("1234"));
+  expect(calls.some(c => c.method === "sendMessage" && c.payload.text.includes("Select your programme"))).toBe(true);
+  await processUpdate(bot, callback("project:computer-science-economics"));
+  expect(calls.some(c => c.method === "editMessageText" && c.payload.text.includes("Choose your honours safety floor"))).toBe(true);
+  expect(calls.some(c => c.payload.text?.includes("Honours Projection"))).toBe(false);
+  const messagesBeforeTarget = calls.filter(c => c.method === "sendMessage").length;
+  await processUpdate(bot, callback("target:first-class"));
+  expect(calls.filter(c => c.method === "sendMessage")).toHaveLength(messagesBeforeTarget);
+  expect(calls.some(c => c.method === "editMessageText" && c.payload.text.includes("Honours Projection") && c.payload.text.includes("Computer Science with Economics"))).toBe(true);
+  await processUpdate(bot, callback("projection:1"));
+  await processUpdate(bot, callback("projection:2"));
+  await processUpdate(bot, callback("projection:3"));
+  expect(calls.some(c => c.method === "editMessageText" && c.payload.text.includes("Term 1 of") && c.payload.text.includes("Units") && c.payload.text.includes("Aim"))).toBe(true);
+  expect(calls.some(c => c.method === "editMessageText" && c.payload.text.includes("ECN201 Principles of Economics I"))).toBe(true);
+  expect(calls.some(c => c.method === "editMessageText" && c.payload.text.includes("EEE201 Applied Electricity I"))).toBe(false);
+  await state.delete("project_access");
+  await processUpdate(bot, callback("projection:4"));
+  expect(calls.some(c => c.method === "answerCallbackQuery" && c.payload.show_alert && c.payload.text.includes("Access expired"))).toBe(true);
 });
 
 test("analytics calculates chronological GPA trends and performance extremes", () => {
