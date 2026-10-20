@@ -25,10 +25,21 @@ import type {
 } from "./types";
 
 const HELP = [
-  "<b>OAU_PORTAL_CHECKER</b>",
+  "<b>IfeMate</b>",
+  "Your private OAU results assistant. I check ePortal every 15 minutes and alert you when a result changes.",
   "",
+  "<b>Start here</b>",
+  "1. Send /login and enter your matric number and portal password.",
+  "2. Send /refresh to fetch your current results.",
+  "3. Open /results, /summary, /analytics, /compare, or /report.",
+  "4. Create your private results PIN when prompted.",
+  "",
+  "Your account is isolated from every other user. Use IfeMate only in this private chat. Your password message is deleted after reading, and your saved credentials are encrypted for automatic checks.",
+  "",
+  "<b>Commands</b>",
   "/login - connect your OAU portal account",
   "/logout - sign out and delete the saved password",
+  "/cancel - cancel the current login or PIN prompt",
   "/clear - delete recent messages from this chat",
   "/setpin - create or change your results PIN",
   "/analytics - GPA trends and performance statistics",
@@ -37,7 +48,8 @@ const HELP = [
   "/results - pick a semester to view (asks for PIN)",
   "/summary - CGPA and unit totals (asks for PIN)",
   "/refresh - fetch the latest results from the portal now",
-  "/status - session and last check info",
+  "/status - session and last-check information",
+  "/help - show this guide",
 ].join("\n");
 
 const DELETE_ROW = [{ text: "🗑 Delete", callback_data: "delete" }];
@@ -92,7 +104,7 @@ function formatTime(iso: string): string {
 
 export function createBot(env: BotEnv): Bot {
   const bot = new Bot(env.BOT_TOKEN, { client: { timeoutSeconds: 10 } });
-  const ownerId = Number(env.OWNER_ID);
+  const chatId = Number(env.CHAT_ID);
 
   async function rememberMessage(id: number, date: number) {
     const cutoff = Math.floor(Date.now() / 1000) - MESSAGE_DELETE_WINDOW_SECONDS;
@@ -111,9 +123,8 @@ export function createBot(env: BotEnv): Bot {
     return response;
   });
 
-  // Private bot: silently ignore everyone except the owner.
   bot.use(async (ctx, next) => {
-    if (ctx.from?.id === ownerId && ctx.chat?.type === "private" && ctx.chat.id === ownerId) await next();
+    if (ctx.from?.id === chatId && ctx.chat?.type === "private" && ctx.chat.id === chatId) await next();
   });
 
   bot.use(async (ctx, next) => {
@@ -230,6 +241,7 @@ export function createBot(env: BotEnv): Bot {
   });
 
   bot.command("start", (ctx) => ctx.reply(HELP, { parse_mode: "HTML" }));
+  bot.command("help", (ctx) => ctx.reply(HELP, { parse_mode: "HTML" }));
 
   bot.command("cancel", async (ctx) => {
     await env.STATE.write({}, ["login_state", "pin_state", "result_access"]);

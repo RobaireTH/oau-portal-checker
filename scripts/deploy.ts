@@ -54,7 +54,7 @@ async function main(): Promise<void> {
       throw new Error("Cannot parse deployment secrets. Use a valid dotenv or JSON file.");
     }
     if (!secrets || typeof secrets !== "object" || Array.isArray(secrets)) throw new Error("Deployment secrets must be key-value pairs.");
-    for (const name of ["BOT_TOKEN", "WEBHOOK_SECRET", "OWNER_ID", "ENCRYPTION_KEY"]) {
+    for (const name of ["BOT_TOKEN", "WEBHOOK_SECRET", "ENCRYPTION_KEY"]) {
       if (typeof secrets[name] !== "string" || !secrets[name]) throw new Error(`Missing ${name} in deployment secrets file.`);
     }
   }

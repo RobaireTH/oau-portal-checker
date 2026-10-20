@@ -12,7 +12,7 @@ import { checkForNewResults, diff, flatten, formatChanges } from "../src/notify"
 import { login, normalizeResults } from "../src/portal";
 import { generateAcademicReport } from "../src/report";
 import { ACCOUNT_STATE_KEYS, DurableStateStore } from "../src/state";
-import { isOwnerUpdate, processUpdate } from "../src/updates";
+import { privateChatId, processUpdate } from "../src/updates";
 import type { BotEnv, Course } from "../src/types";
 
 class MemoryStorage {
@@ -48,28 +48,28 @@ const cache = { studentId: 1, results: { "121": [course] }, fetchedAt: new Date(
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
 
-async function setup(seed: Record<string, unknown> = {}) {
+async function setup(seed: Record<string, unknown> = {}, chatId = 42) {
   const storage = new MemoryStorage();
   const state = new DurableStateStore(storage as unknown as DurableObjectStorage);
   for (const [k, v] of Object.entries(seed)) await state.put(k, typeof v === "string" ? v : JSON.stringify(v));
-  const env: BotEnv = { STATE: state, BOT_TOKEN: "123:dummy", OWNER_ID: "42", WEBHOOK_SECRET: "dummy", ENCRYPTION_KEY: key };
+  const env: BotEnv = { STATE: state, BOT_TOKEN: "123:dummy", CHAT_ID: String(chatId), ENCRYPTION_KEY: key };
   const bot = createBot(env);
   const calls: { method: string; payload: any }[] = [];
   bot.api.config.use(async (_previous, method, payload) => {
     calls.push({ method, payload });
     return { ok: true, result: method === "getMe" ? { id: 123, is_bot: true, first_name: "Test", username: "test_bot" }
-      : method === "sendMessage" ? { message_id: 77, date: Math.floor(Date.now() / 1000), chat: { id: 42, type: "private" }, text: payload.text }
-      : method === "sendPhoto" ? { message_id: 78, date: Math.floor(Date.now() / 1000), chat: { id: 42, type: "private" }, photo: [] }
-      : method === "sendDocument" ? { message_id: 79, date: Math.floor(Date.now() / 1000), chat: { id: 42, type: "private" }, document: {} } : true } as any;
+      : method === "sendMessage" ? { message_id: 77, date: Math.floor(Date.now() / 1000), chat: { id: chatId, type: "private" }, text: payload.text }
+      : method === "sendPhoto" ? { message_id: 78, date: Math.floor(Date.now() / 1000), chat: { id: chatId, type: "private" }, photo: [] }
+      : method === "sendDocument" ? { message_id: 79, date: Math.floor(Date.now() / 1000), chat: { id: chatId, type: "private" }, document: {} } : true } as any;
   });
   return { storage, state, env, bot, calls };
 }
 
 let updateId = 0;
-function message(text: string, group = false, sender = 42): Update {
+function message(text: string, group = false, sender = 42, chatId = 42): Update {
   return { update_id: ++updateId, message: {
     message_id: updateId, date: Math.floor(Date.now() / 1000), from: { id: sender, is_bot: false, first_name: "Owner" },
-    chat: group ? { id: -100, type: "supergroup", title: "Group" } : { id: 42, type: "private", first_name: "Owner" }, text,
+    chat: group ? { id: -100, type: "supergroup", title: "Group" } : { id: chatId, type: "private", first_name: "Owner" }, text,
     ...(text.startsWith("/") ? { entities: [{ type: "bot_command" as const, offset: 0, length: text.split(" ")[0].length }] } : {}),
   } };
 }
@@ -88,18 +88,42 @@ function mockPortal(courses: Course[]) {
 test("fresh bot initializes and dispatches webhook updates", async () => {
   const { bot, calls } = await setup();
   await processUpdate(bot, message("/start"));
-  await processUpdate(bot, message("/start"));
+  await processUpdate(bot, message("/help"));
   expect(calls.filter(c => c.method === "getMe")).toHaveLength(1);
   expect(calls.filter(c => c.method === "sendMessage")).toHaveLength(2);
+  expect(calls.filter(c => c.method === "sendMessage").every(c => c.payload.text.includes("Start here"))).toBe(true);
+  expect(calls.filter(c => c.method === "sendMessage").every(c => c.payload.text.includes("isolated from every other user"))).toBe(true);
 });
 
-test("owner group messages and other users cannot enter private flows", async () => {
+test("group messages and mismatched users cannot enter private flows", async () => {
   const { bot, calls } = await setup({ session, results: cache });
   const group = message("/summary", true);
-  expect(isOwnerUpdate(group, 42)).toBe(false);
+  expect(privateChatId(group)).toBeNull();
   await processUpdate(bot, group);
   await processUpdate(bot, message("/summary", false, 99));
   expect(calls.filter(c => c.method === "sendMessage")).toHaveLength(0);
+});
+
+test("private updates resolve to independent user chats", async () => {
+  expect(privateChatId(message("/start", false, 42, 42))).toBe("42");
+  expect(privateChatId(message("/start", false, 99, 99))).toBe("99");
+  expect(privateChatId(message("/start", false, 99, 42))).toBeNull();
+  const first = await setup({}, 42);
+  const second = await setup({}, 99);
+  await processUpdate(first.bot, message("/setpin", false, 42, 42));
+  await processUpdate(first.bot, message("1234", false, 42, 42));
+  await processUpdate(second.bot, message("/setpin", false, 99, 99));
+  await processUpdate(second.bot, message("9876", false, 99, 99));
+  expect(await first.state.get("pin_digest")).toBe(await digestPin(key, "1234"));
+  expect(await second.state.get("pin_digest")).toBe(await digestPin(key, "9876"));
+});
+
+test("queued updates preempt a later account-check alarm", async () => {
+  const storage = new MemoryStorage();
+  storage.alarm = Date.now() + 15 * 60 * 1000;
+  const inbox = new Inbox(storage as unknown as DurableObjectStorage, key);
+  await inbox.enqueue(message("/start"));
+  expect(storage.alarm).toBeLessThanOrEqual(Date.now() + 1000);
 });
 
 test("webhook processing invokes the configured error handler", async () => {

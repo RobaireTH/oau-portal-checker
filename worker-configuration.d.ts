@@ -3,7 +3,7 @@
 interface __BaseEnv_Env {
 	BOT_TOKEN: string;
 	WEBHOOK_SECRET: string;
-	OWNER_ID: string;
+	OWNER_ID?: string;
 	ENCRYPTION_KEY: string;
 	OWNER: DurableObjectNamespace<import("./src/index").OwnerBot>;
 }

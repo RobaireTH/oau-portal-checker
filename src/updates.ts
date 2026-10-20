@@ -1,10 +1,12 @@
 import { BotError, type Bot } from "grammy/web";
 import type { Update } from "grammy/types";
 
-export function isOwnerUpdate(update: Update, ownerId: number): boolean {
+export function privateChatId(update: Update): string | null {
   const from = update.message?.from ?? update.callback_query?.from;
   const chat = update.message?.chat ?? update.callback_query?.message?.chat;
-  return from?.id === ownerId && chat?.type === "private" && chat.id === ownerId;
+  if (!from || !Number.isSafeInteger(from.id) || from.id <= 0) return null;
+  if (chat?.type !== "private" || chat.id !== from.id) return null;
+  return String(from.id);
 }
 
 export async function processUpdate(bot: Bot, update: Update): Promise<void> {

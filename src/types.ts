@@ -1,4 +1,6 @@
-export interface Env extends Cloudflare.Env {}
+export interface Env extends Cloudflare.Env {
+  OWNER_ID?: string;
+}
 
 export interface StateStore {
   get<T>(key: string, type: "json"): Promise<T | null>;
@@ -11,8 +13,7 @@ export interface StateStore {
 export interface BotEnv {
   STATE: StateStore;
   BOT_TOKEN: string;
-  OWNER_ID: string;
-  WEBHOOK_SECRET: string;
+  CHAT_ID: string;
   /** Base64-encoded 32-byte key used to encrypt the saved portal password. */
   ENCRYPTION_KEY: string;
 }

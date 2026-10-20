@@ -19,7 +19,9 @@ export class Inbox {
         queue.push(job);
         await txn.put("inbox", queue);
       }
-      if (queue.length && await txn.getAlarm() === null) await txn.setAlarm(Date.now() + 1);
+      const due = Date.now() + 1;
+      const alarm = await txn.getAlarm();
+      if (queue.length && (alarm === null || alarm > due)) await txn.setAlarm(due);
     });
   }
 
