@@ -96,3 +96,7 @@ bun test
 ```
 
 The test suite uses mock portal and Telegram responses and does not send real messages.
+
+## Built on
+
+IfeMate is built on [Cypher012/OAU-PORTAL-CHECKER](https://github.com/Cypher012/OAU-PORTAL-CHECKER). Its academic analytics and reporting features were contributed back to the original project and merged in [pull request #1](https://github.com/Cypher012/OAU-PORTAL-CHECKER/pull/1). Future improvements will continue in the [IfeMate repository](https://github.com/RobaireTH/oau-portal-checker).
