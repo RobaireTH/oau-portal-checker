@@ -1,12 +1,12 @@
 import type { Update } from "grammy/types";
 import { Hono } from "hono";
-import { isOwnerUpdate } from "./updates";
+import { privateChatId } from "./updates";
 import type { Env } from "./types";
 export { OwnerBot } from "./owner";
 
 const app = new Hono<{ Bindings: Env }>();
 
-app.get("/", (c) => c.text("OAU_PORTAL_CHECKER is running"));
+app.get("/", (c) => c.text("IfeMate is running"));
 
 // Acknowledge only after the encrypted update is durably stored for alarm processing.
 app.post("/webhook", async (c) => {
@@ -23,9 +23,8 @@ app.post("/webhook", async (c) => {
   } catch {
     return c.text("Invalid update", 400);
   }
-  if (isOwnerUpdate(update, Number(c.env.OWNER_ID))) {
-    await c.env.OWNER.getByName(c.env.OWNER_ID).enqueueUpdate(update);
-  }
+  const chatId = privateChatId(update);
+  if (chatId) await c.env.OWNER.getByName(chatId).enqueueUpdate(chatId, update);
 
   return c.text("ok");
 });
@@ -33,6 +32,9 @@ app.post("/webhook", async (c) => {
 export default {
   fetch: app.fetch,
   async scheduled(_event, env) {
-    await env.OWNER.getByName(env.OWNER_ID).enqueueCheck();
+    const chatId = env.OWNER_ID;
+    if (chatId && Number.isSafeInteger(Number(chatId)) && Number(chatId) > 0) {
+      await env.OWNER.getByName(chatId).enqueueCheck(chatId);
+    }
   },
 } satisfies ExportedHandler<Env>;

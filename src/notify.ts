@@ -133,7 +133,7 @@ async function flushPending(env: BotEnv, send: Send): Promise<void> {
 
 /** Sending can be injected in tests without contacting Telegram. */
 export async function checkForNewResults(env: BotEnv, send: Send = (message, html) =>
-  createBot(env).api.sendMessage(env.OWNER_ID, message, html ? { parse_mode: "HTML" } : {}),
+  createBot(env).api.sendMessage(env.CHAT_ID, message, html ? { parse_mode: "HTML" } : {}),
 ): Promise<void> {
   const checkedAt = new Date().toISOString();
   try {
